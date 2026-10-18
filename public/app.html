@@ -26,10 +26,9 @@ button.ghost { background: none; border: 1.5px solid var(--line); color: var(--t
 </header>
 <main>
   <h1 id="hello">Loading…</h1>
-  <p id="sub">Your CapLynk home. Matching, profiles and roles will live here.</p>
+  <p id="sub">Your CapLynk home.</p>
   <div style="display:flex;gap:10px;flex-wrap:wrap">
-    <a class="btn" href="modules/recruiter.html">Open recruiter workspace</a>
-    <a class="btn" href="assistant.html" style="background:none;border:1.5px solid var(--line);color:var(--text)">CapLynk Assistant</a>
+    <a class="btn" href="applicant.html">Applicant Data</a>
   </div>
 </main>
 <script src="firebase-config.js"></script>
@@ -45,13 +44,15 @@ if (!cfg.apiKey) {
   const { getFirestore, doc, getDoc } = await import(sdk + "/firebase-firestore.js");
   const app = initializeApp(cfg); const a = auth.getAuth(app);
   auth.onAuthStateChanged(a, async (u) => {
-    if (!u) return location.replace("index.html");
+    // Email/password accounts must verify their email before they get in.
+    if (!u || (!u.emailVerified && u.providerData.some((x) => x.providerId === "password"))) {
+      if (u) await auth.signOut(a);
+      return location.replace("index.html");
+    }
     const snap = await getDoc(doc(getFirestore(app), "users", u.uid)).catch(() => null);
     const p = snap?.data() || {};
     document.getElementById("hello").textContent = "Welcome, " + ((p.name || u.displayName || u.email).split(" ")[0]);
-    document.getElementById("sub").textContent = p.role === "employer"
-      ? "You're set up as an employer. Next: post a role and its required skills."
-      : "You're set up as a candidate. Next: build your skills profile.";
+    document.getElementById("sub").textContent = "Open Applicant Data to upload your CV. The CapLynk team reviews every CV and will contact you on WhatsApp.";
   });
   document.getElementById("signOut").onclick = () => auth.signOut(a);
 }

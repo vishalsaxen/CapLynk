@@ -1,9 +1,9 @@
-// CapLynk recruiter workspace.
-// M1 CVs: browse first (text extracted in the browser), parse later (Claude via /api/profiles, or the offline heuristics).
-// M2 WhatsApp send: Business Cloud API via /api/whatsapp/send, or a wa.me click-to-chat link.
-// M3 Tracker: per-candidate conversation with status, next step, due date, and close/reopen.
-// M4 Roles: SFIA skill profiles, ranked matches, and a printable client summary card.
-// Storage: Firestore under users/{uid}/... when firebase-config.js is filled in, otherwise this browser's localStorage.
+// CapLynk Super Admin workspace.
+// CVs: every CV candidates upload on applicant.html (top-level cvs/), parsed here (Claude via /api/profiles, or the offline heuristics).
+// WhatsApp: wa.me click-to-chat, with each conversation kept as a log that downloads as .txt.
+// Tracker: per-candidate conversation with status, next step, due date, and close/reopen.
+// Roles: SFIA skill profiles, ranked matches, and a printable client summary card.
+// Storage: top-level Firestore collections cvs/, roles/, conversations/ that only the admin account can read (see firestore.rules).
 (() => {
   const S = window.CapSkills;
   const $ = (id) => document.getElementById(id);
@@ -21,12 +21,13 @@
   const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
-  const settings = Object.assign({ waMode: LIVE ? "api" : "link", cc: "44", sender: "" }, lsGet(SET_KEY, {}));
+  const ADMIN_EMAIL = "vaani.s@gaplyn.com";
+  const settings = Object.assign({ cc: "44", sender: "" }, lsGet(SET_KEY, {}), { waMode: "link" });
   const state = { candidates: [], roles: [], conversations: {}, tab: "cvs", candId: null, chatId: null, roleId: null, wf: "open", q: "" };
   let fb = null; // { db, fs, user } in live mode
 
   // ---------- storage ----------
-  const COLS = { candidates: "candidates", roles: "roles", conversations: "conversations" };
+  const COLS = { candidates: "cvs", roles: "roles", conversations: "conversations" };
   function persistLocal() {
     if (LIVE) return;
     lsSet(LS_KEY, { candidates: state.candidates, roles: state.roles, conversations: state.conversations });
@@ -36,14 +37,14 @@
     if (col === "conversations") state.conversations[obj.id] = obj;
     else { const arr = state[col]; const i = arr.findIndex((x) => x.id === obj.id); if (i >= 0) arr[i] = obj; else arr.unshift(obj); }
     if (!LIVE) return persistLocal();
-    try { await fb.fs.setDoc(fb.fs.doc(fb.db, "users", fb.user.uid, COLS[col], obj.id), JSON.parse(JSON.stringify(obj))); }
+    try { await fb.fs.setDoc(fb.fs.doc(fb.db, COLS[col], obj.id), JSON.parse(JSON.stringify(obj))); }
     catch (e) { console.error(e); toast("Couldn't save to the cloud. Check your connection."); }
   }
   async function remove(col, id) {
     if (col === "conversations") delete state.conversations[id];
     else state[col] = state[col].filter((x) => x.id !== id);
     if (!LIVE) return persistLocal();
-    await fb.fs.deleteDoc(fb.fs.doc(fb.db, "users", fb.user.uid, COLS[col], id)).catch(console.error);
+    await fb.fs.deleteDoc(fb.fs.doc(fb.db, COLS[col], id)).catch(console.error);
   }
 
   async function api(path, body) {
@@ -109,7 +110,8 @@
       try {
         const text = (await extractText(f)).replace(/[ \t]+\n/g, "\n").trim();
         if (!text) { toast(f.name + " has no readable text (scanned image?)"); continue; }
-        const c = { id: uid(), status: "new", fileName: f.name, cvText: text.slice(0, 60000), addedAt: now(), name: "", skills: [] };
+        const c = { id: uid(), status: "new", fileName: f.name, cvText: text.slice(0, 60000), addedAt: now(), name: "", skills: [],
+          ownerUid: fb?.user?.uid || "", ownerEmail: fb?.user?.email || "", ownerName: "Uploaded by admin" };
         await save("candidates", c); added++;
         if (!state.candId) state.candId = c.id;
       } catch (e) { toast(e.message || "Couldn't read " + f.name); }
@@ -126,7 +128,7 @@
     catch (e) { if (LIVE && !quiet) toast("Claude parse unavailable, used the built-in parser."); p = S.parseCvText(c.cvText); }
     const valid = (p.skills || []).filter((s) => S.BY_CODE[s.code]).map((s) => ({ code: s.code, level: Math.max(1, Math.min(7, +s.level || 3)), evidence: s.evidence || "" }));
     Object.assign(c, {
-      name: p.name || c.name || "", email: p.email || "", phone: p.phone || "", location: p.location || "",
+      name: p.name || c.name || accountName(c), email: p.email || c.email || accountEmail(c), phone: p.phone || "", location: p.location || "",
       linkedin: p.linkedin || "", headline: p.headline || "", yearsExperience: p.yearsExperience ?? null,
       summary: p.summary || c.summary || "", skills: valid, status: "parsed", parsedAt: now(), parsedBy: by,
     });
@@ -141,7 +143,10 @@
     render();
   };
 
-  function candLabel(c) { return c.name || c.fileName || "Unnamed candidate"; }
+  // The candidate's own account details, for CVs they uploaded themselves.
+  const accountName = (c) => (c.ownerName && c.ownerName !== "Uploaded by admin" ? c.ownerName : "");
+  const accountEmail = (c) => (c.ownerName === "Uploaded by admin" ? "" : c.ownerEmail || "");
+  function candLabel(c) { return c.name || accountName(c) || c.fileName || "Unnamed candidate"; }
   function duplicateOf(c) {
     const d = (v) => String(v || "").replace(/\D/g, "").slice(-9);
     return state.candidates.find((o) => o.id !== c.id && ((c.email && o.email && o.email.toLowerCase() === c.email.toLowerCase()) || (c.phone && o.phone && d(o.phone) === d(c.phone))));
@@ -149,27 +154,25 @@
 
   function renderCandidates() {
     const q = state.q;
-    const list = state.candidates.filter((c) => !q || [c.name, c.fileName, c.email, c.headline, ...(c.skills || []).map((s) => s.code + " " + (S.BY_CODE[s.code]?.name || ""))].join(" ").toLowerCase().includes(q));
+    const list = state.candidates.filter((c) => !q || [c.name, c.fileName, c.email, c.ownerName, c.ownerEmail, c.headline, ...(c.skills || []).map((s) => s.code + " " + (S.BY_CODE[s.code]?.name || ""))].join(" ").toLowerCase().includes(q));
     $("candList").innerHTML = list.length ? list.map((c) => `
       <li><button data-id="${c.id}" aria-current="${c.id === state.candId}">
         <span class="li-top"><span>${h(candLabel(c))}</span>${c.status === "new" ? '<span class="chip amber">Not parsed</span>' : '<span class="chip green">Parsed</span>'}</span>
-        <span class="li-sub">${h(c.status === "new" ? c.fileName : [c.headline, c.location].filter(Boolean).join(" · ") || c.email || "")}</span>
+        <span class="li-sub">${h(c.status === "new" ? [accountEmail(c), fmtTime(c.addedAt)].filter(Boolean).join(" · ") || c.fileName : [c.headline, c.location].filter(Boolean).join(" · ") || c.email || "")}</span>
       </button></li>`).join("") : `<li class="muted" style="padding:14px">${state.candidates.length ? "No matches." : "No CVs yet."}</li>`;
     $("candList").querySelectorAll("button").forEach((b) => (b.onclick = () => { state.candId = b.dataset.id; renderCandidates(); }));
 
     const c = state.candidates.find((x) => x.id === state.candId);
-    const drop = `<div class="drop" id="drop"><strong>Drop CVs here</strong> or use <em>Browse CVs</em>. PDF, DOCX or TXT. They're stored unparsed until you choose to parse.</div>`;
+    const drop = `<div class="drop" id="drop"><strong>Drop CVs here</strong> or use <em>Browse CVs</em> to add one yourself. Candidates' own uploads from Applicant Data appear in the list on their own.</div>`;
     if (!c) {
-      $("candDetail").innerHTML = drop + `<div class="empty"><h3>Start with the CVs</h3><p>Add CVs now and parse them later. Parsing pulls out the name, contact details and an SFIA skill profile you can edit.</p>
-        <button class="btn ghost" id="emptySamples" type="button">Try with sample CVs</button></div>`;
-      $("emptySamples").onclick = loadSamples;
+      $("candDetail").innerHTML = drop + `<div class="empty"><h3>No CVs yet</h3><p>CVs that candidates upload under Applicant Data show up here. Parse them to pull out contact details and an SFIA skill profile, then contact the candidate on WhatsApp.</p></div>`;
       return wireDrop();
     }
     const dup = duplicateOf(c);
     const conv = state.conversations[c.id];
     $("candDetail").innerHTML = drop + `
       <div class="title-row">
-        <div><h1>${h(candLabel(c))}</h1><div class="sub">${h(c.fileName || "")}${c.parsedBy ? " · parsed " + (c.parsedBy === "claude" ? "by Claude" : "by built-in parser") + " " + fmtTime(c.parsedAt) : ""}</div></div>
+        <div><h1>${h(candLabel(c))}</h1><div class="sub">${h(c.fileName || "")}${c.ownerEmail && accountEmail(c) ? " · uploaded by " + h(accountEmail(c)) + " " + fmtTime(c.addedAt) : ""}${c.parsedBy ? " · parsed " + (c.parsedBy === "claude" ? "by Claude" : "by built-in parser") + " " + fmtTime(c.parsedAt) : ""}</div></div>
         <div class="row">
           <button class="btn ${c.status === "new" ? "" : "ghost"}" id="parseBtn" type="button">${c.status === "new" ? "Parse CV" : "Parse again"}</button>
           <button class="btn wa" id="waBtn" type="button" ${c.phone ? "" : "disabled title='Add a phone number first'"}>WhatsApp${conv ? (conv.status === "closed" ? " (closed)" : "") : ""}</button>
@@ -307,6 +310,7 @@
             <div class="sub">${phone ? "+" + h(phone) : "No phone number"} · ${settings.waMode === "api" ? "Business API" : "WhatsApp link"}</div></div>
           <div class="row">
             <button class="btn ghost sm" id="viewCandBtn" type="button">View CV</button>
+            <button class="btn ghost sm" id="logBtn" type="button">Download log (.txt)</button>
             ${closed ? `<button class="btn sm" id="reopenBtn" type="button">Reopen chat</button>` :
               `<select class="in" id="closeReason" aria-label="Close reason">${CLOSE_REASONS.map((r) => `<option>${r}</option>`).join("")}</select><button class="btn danger sm" id="closeChatBtn" type="button">Close chat</button>`}
           </div>
@@ -336,6 +340,7 @@
       </div>`;
     const msgs = $("msgs"); msgs.scrollTop = msgs.scrollHeight;
     $("viewCandBtn").onclick = () => { state.candId = c.id; setTab("cvs"); };
+    $("logBtn").onclick = () => download(logFileName(c), convLog(conv, c));
     if (closed) {
       $("reopenBtn").onclick = () => { conv.status = "open"; conv.messages.push({ dir: "sys", text: "Chat reopened", at: now() }); save("conversations", conv); state.wf = "open"; renderChats(); };
       return;
@@ -361,6 +366,39 @@
     };
     $("sendBtn").onclick = () => sendWhatsApp(conv, c, phone);
   }
+
+  // ---------- conversation logs (.txt) ----------
+  const stamp = (iso) => iso ? new Date(iso).toLocaleString([], { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+  function convLog(conv, c) {
+    const role = state.roles.find((r) => r.id === conv.roleId);
+    const head = [
+      "CapLynk WhatsApp log",
+      "Candidate: " + candLabel(c),
+      "Phone: " + (c.phone || "none"),
+      "Email: " + (c.email || accountEmail(c) || "none"),
+      role ? "Role: " + role.title + (role.client ? " (" + role.client + ")" : "") : "",
+      "Status: " + convState(conv)[0] + (conv.closeReason ? " (" + conv.closeReason + ")" : ""),
+      conv.nextStep ? "Next step: " + conv.nextStep + (conv.nextStepDue ? ", due " + conv.nextStepDue : "") : "",
+      "Started: " + stamp(conv.createdAt),
+      "Exported: " + stamp(now()),
+    ].filter(Boolean);
+    const who = { out: "CapLynk", in: first(candLabel(c)), sys: "Note" };
+    const lines = conv.messages.map((m) => `[${stamp(m.at)}] ${who[m.dir] || m.dir}: ${m.text}` +
+      (m.dir === "out" && m.status ? ` (${m.status})` : m.via === "manual" ? " (logged by admin)" : ""));
+    return head.join("\n") + "\n" + "-".repeat(40) + "\n" + (lines.join("\n") || "No messages yet.") + "\n";
+  }
+  const logFileName = (c) => "caplynk-whatsapp-" + candLabel(c).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + ".txt";
+  function download(name, text) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text.replace(/\n/g, "\r\n")], { type: "text/plain;charset=utf-8" }));
+    a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  $("allLogsBtn").onclick = () => {
+    const convs = Object.values(state.conversations).filter((cv) => state.candidates.some((x) => x.id === cv.id));
+    if (!convs.length) return toast("No conversations to download yet.");
+    const text = convs.map((cv) => convLog(cv, state.candidates.find((x) => x.id === cv.id))).join("\n" + "=".repeat(40) + "\n\n");
+    download("caplynk-whatsapp-logs-" + today() + ".txt", text);
+  };
 
   async function sendWhatsApp(conv, c, phone) {
     const text = $("msgText").value.trim();
@@ -519,11 +557,10 @@
 
   // ---------- settings ----------
   $("settingsBtn").onclick = () => {
-    $("setWaMode").value = settings.waMode; $("setCc").value = settings.cc; $("setSender").value = settings.sender;
-    $("storageNote").textContent = LIVE ? "Data is saved to your Firestore account and syncs across devices." : "Preview mode: data is saved only in this browser. Add your Firebase config to save it to your account.";
+    $("setCc").value = settings.cc; $("setSender").value = settings.sender;
+    $("storageNote").textContent = LIVE ? "CVs, roles and WhatsApp logs are saved in Firestore, readable only by the Super Admin account." : "Preview mode: data is saved only in this browser.";
     $("settingsDlg").showModal();
   };
-  $("setWaMode").onchange = (e) => { settings.waMode = e.target.value; lsSet(SET_KEY, settings); if (e.target.value === "api" && !LIVE) toast("The Business API needs CapLynk deployed to Firebase. Until then sends fall back to the WhatsApp link."); };
   $("setCc").onchange = (e) => { settings.cc = e.target.value.replace(/\D/g, ""); lsSet(SET_KEY, settings); };
   $("setSender").onchange = (e) => { settings.sender = e.target.value.trim(); lsSet(SET_KEY, settings); };
   $("closeSettingsBtn").onclick = () => { $("settingsDlg").close(); render(); };
@@ -531,23 +568,6 @@
     const blob = new Blob([JSON.stringify({ candidates: state.candidates, roles: state.roles, conversations: state.conversations }, null, 2)], { type: "application/json" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "caplynk-export.json"; a.click();
   };
-  $("clearBtn").onclick = async () => {
-    if (!confirm("Delete every candidate, role and conversation?")) return;
-    for (const c of [...state.candidates]) await remove("candidates", c.id);
-    for (const r of [...state.roles]) await remove("roles", r.id);
-    for (const id of Object.keys(state.conversations)) await remove("conversations", id);
-    state.candId = state.chatId = state.roleId = null; $("settingsDlg").close(); render();
-  };
-  async function loadSamples() {
-    const S2 = window.CapSamples;
-    for (const cv of S2.cvs) { const c = { id: uid(), status: "new", fileName: cv.fileName, cvText: cv.text, addedAt: now(), name: "", skills: [] }; await save("candidates", c); }
-    const r = { id: uid(), ...S2.role, skills: [], shortlist: [], summaries: {}, createdAt: now() };
-    r.skills = S.parseJobText(r.description); await save("roles", r);
-    state.candId = state.candidates[0].id; state.roleId = r.id;
-    if ($("settingsDlg").open) $("settingsDlg").close();
-    toast("Added 3 sample CVs (unparsed) and a sample role."); setTab("cvs");
-  }
-  $("loadSamplesBtn").onclick = loadSamples;
 
   // ---------- boot ----------
   async function boot() {
@@ -555,27 +575,60 @@
       const d = lsGet(LS_KEY, {});
       Object.assign(state, { candidates: d.candidates || [], roles: d.roles || [], conversations: d.conversations || {} });
       state.candId = state.candidates[0]?.id || null; state.roleId = state.roles[0]?.id || null;
+      $("gate").hidden = true; document.body.classList.remove("locked");
       return render();
     }
-    $("modeBadge").textContent = "Live"; $("modeBadge").classList.add("live");
+    $("modeBadge").textContent = "Super Admin"; $("modeBadge").classList.add("live");
     const sdk = window.CAPLYNK_FIREBASE_SDK;
     const { initializeApp } = await import(sdk + "/firebase-app.js");
     const auth = await import(sdk + "/firebase-auth.js");
     const fs = await import(sdk + "/firebase-firestore.js");
-    const app = initializeApp(cfg); const db = fs.getFirestore(app);
-    auth.onAuthStateChanged(auth.getAuth(app), async (user) => {
-      if (!user) return location.replace("../index.html");
+    const app = initializeApp(cfg); const db = fs.getFirestore(app); const a = auth.getAuth(app);
+    const gate = $("gate"), gateErr = (m, kind) => { $("gateMsg").textContent = m || ""; $("gateMsg").className = "gate-msg " + (kind || ""); };
+    let unsub = [];
+
+    $("gateForm").onsubmit = async (e) => {
+      e.preventDefault(); gateErr("");
+      const email = $("gateEmail").value.trim(), pw = $("gatePw").value;
+      if (email.toLowerCase() !== ADMIN_EMAIL) return gateErr("This page is for the CapLynk Super Admin only.");
+      $("gateBtn").disabled = true;
+      try { await auth.signInWithEmailAndPassword(a, email, pw); }
+      catch (err) {
+        gateErr(err.code === "auth/too-many-requests" ? "Too many attempts. Wait a few minutes and try again." : "That email and password don't match.");
+      } finally { $("gateBtn").disabled = false; }
+    };
+    $("signOutBtn").onclick = () => auth.signOut(a);
+
+    auth.onAuthStateChanged(a, async (user) => {
+      unsub.forEach((f) => f()); unsub = [];
+      const isAdmin = user && (user.email || "").toLowerCase() === ADMIN_EMAIL;
+      if (user && !isAdmin) { await auth.signOut(a); return gateErr("That account isn't the Super Admin. Sign in with the admin email."); }
+      if (user && !user.emailVerified) {
+        await auth.sendEmailVerification(user).catch(() => {});
+        await auth.signOut(a);
+        return gateErr("One-time step: we've emailed a verification link to " + ADMIN_EMAIL + ". Open it, then sign in again.", "info");
+      }
+      gate.hidden = !!user; document.body.classList.toggle("locked", !user);
+      if (!user) { state.candidates = []; state.roles = []; state.conversations = {}; return; }
       fb = { db, fs, user };
-      const col = (n) => fs.collection(db, "users", user.uid, n);
-      const [cs, rs] = await Promise.all([fs.getDocs(fs.query(col("candidates"), fs.orderBy("addedAt", "desc"))), fs.getDocs(col("roles"))]);
-      state.candidates = cs.docs.map((d) => d.data()); state.roles = rs.docs.map((d) => d.data());
-      state.candId = state.candidates[0]?.id || null; state.roleId = state.roles[0]?.id || null;
-      // Conversations are live: replies written by the WhatsApp webhook show up without a refresh.
-      fs.onSnapshot(col("conversations"), (snap) => {
+      $("whoami").textContent = user.email;
+      const keepTyping = () => document.activeElement && ["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement.tagName) && !document.activeElement.closest("dialog");
+      // CVs are live: a candidate's upload shows up here without a refresh.
+      let initial = true;
+      unsub.push(fs.onSnapshot(fs.query(fs.collection(db, "cvs"), fs.orderBy("addedAt", "desc")), (snap) => {
+        state.candidates = snap.docs.map((d) => d.data());
+        if (!state.candidates.some((c) => c.id === state.candId)) state.candId = state.candidates[0]?.id || null;
+        const fresh = snap.docChanges().filter((ch) => ch.type === "added").length;
+        if (!initial && fresh) toast(fresh === 1 ? "A new CV just arrived." : fresh + " new CVs just arrived.");
+        if (initial || state.tab !== "cvs" || !keepTyping()) render(); else renderUnread();
+        initial = false;
+      }, (e) => { console.error(e); toast("Couldn't load CVs. Check the Firestore rules are deployed."); }));
+      const rs = await fs.getDocs(fs.collection(db, "roles")).catch(() => null);
+      state.roles = rs ? rs.docs.map((d) => d.data()) : []; state.roleId = state.roles[0]?.id || null;
+      unsub.push(fs.onSnapshot(fs.collection(db, "conversations"), (snap) => {
         snap.docChanges().forEach((ch) => { if (ch.type === "removed") delete state.conversations[ch.doc.id]; else state.conversations[ch.doc.id] = ch.doc.data(); });
-        const typing = document.activeElement && ["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement.tagName);
-        if (state.tab === "wa" && !typing) renderChats(); else renderUnread();
-      });
+        if (state.tab === "wa" && !keepTyping()) renderChats(); else renderUnread();
+      }));
       render();
     });
   }

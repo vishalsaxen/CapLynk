@@ -3,20 +3,27 @@
 CapLynk is a skills-based hiring platform from Gaplyn Services. It matches candidates to client roles using standard skill frameworks (such as SFIA) rather than keyword matching on CVs.
 
 ```
-public/index.html      Create account / sign in (email + password, Google) — the entry to the site
-public/app.html        Signed-in home; sends signed-out visitors back to index.html
-public/assistant.html  CapLynk Assistant chat (Claude)
-public/modules/       Recruiter workspace: CV parser, WhatsApp send + tracker, SFIA matching (see modules/README.md)
-modules/functions/    Cloud Functions for the workspace: profiles, waSend, waWebhook
+public/index.html      Candidate sign-up / sign-in (email + password with email verification, or Google)
+public/app.html        Candidate home; signed-out or unverified visitors go back to index.html
+public/applicant.html  Applicant Data: a candidate uploads their CV and sees its status
+public/admin.html      Super Admin: every uploaded CV, parsing, WhatsApp contact, .txt conversation logs, roles and matching
+public/admin.js        Super Admin workspace logic
+public/modules/skills.js  SFIA catalogue, CV heuristics and matching score
+public/assistant.html  CapLynk Assistant chat (Claude), no longer linked from the home page
+modules/functions/     Cloud Functions: profiles (Claude parsing, Super Admin only), waSend, waWebhook
 public/firebase-config.js  Your Firebase web config (shared by all pages)
 functions/index.js     Cloud Function that calls the Claude API and streams the reply
-firebase.json          Hosting + Functions + Firestore config (/api/chat → chat function)
-firestore.rules        Each user can only read/write their own chats
+firebase.json          Hosting + Functions + Firestore config
+firestore.rules        Who can read and write what (see below)
 ```
 
 ## Accounts
 
-People can sign in with email + password, Google, or a mobile number and 6-digit SMS code (OTP). Sign-up creates a Firebase Auth user plus a profile at `users/{uid}` with `name`, `email` and `role` (`candidate` or `employer`), and sends a verification email. Until `firebase-config.js` has an `apiKey`, pages run in preview mode and nothing is saved.
+The public site is for candidates only. They create an account with email and password and must open the verification link before they can sign in (Google accounts are already verified). Sign-up writes `users/{uid}` with `name`, `email` and `role: "candidate"`.
+
+CVs a candidate uploads go to the top-level `cvs` collection with their `ownerUid`. A candidate can read and add only their own, and can remove one until it has been reviewed.
+
+The Super Admin is the single account `vaani.s@gaplyn.com`, signing in at `/admin.html`. Its password is kept in Firebase Authentication (create the user under Authentication → Users → Add user), never in page code, because this repository is public. The first sign-in emails a one-time verification link to that address. Only that verified account can read every CV and the `roles` and `conversations` collections, and only it can call Claude parsing.
 
 ## How the assistant fits together
 
@@ -26,7 +33,7 @@ Browser (Firebase Hosting) → `POST /api/chat` with the user's Firebase ID toke
 
 1. Create a Firebase project at https://console.firebase.google.com (Blaze plan is needed for Functions that call external APIs).
 2. Enable **Authentication → Google** and create a **Firestore** database.
-3. Enable **Authentication → Email/Password** and **Phone** too (Phone needs the Blaze plan to send real SMS; add test numbers under Phone → *Phone numbers for testing* to try it free). Add a Web app and copy its config into `public/firebase-config.js`.
+3. Enable **Authentication → Email/Password**. Add a Web app and copy its config into `public/firebase-config.js`. Add the Super Admin user under **Authentication → Users → Add user**.
 4. Put your project id in `.firebaserc`.
 5. Install and deploy:
 

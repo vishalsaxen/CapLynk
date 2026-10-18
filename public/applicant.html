@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>CapLynk Applicant Data</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;700&family=Figtree:wght@400;600;700&display=swap">
+<style>
+/* Candidate's own page: upload a CV (PDF, DOCX or TXT) and see what they've sent. Only the Super Admin sees everyone's CVs. */
+:root { --green: #1FB33A; --green-hover: #16892C; --green-soft: #E3F6E6; --magenta: #C026D3; --ink: #101827; --bg: #FFFFFF; --panel: #F6F8F6; --text: #101827; --muted: #566070; --line: #DCE3DD; --amber: #A16207; --amber-soft: #FDF3D7; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0B111C; --panel: #111a28; --text: #EEF2F6; --muted: #9AA6B6; --line: #253041; --green-soft: #12301a; --amber: #E2B04A; --amber-soft: #3a2e12; color-scheme: dark; } }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 "Figtree", system-ui, sans-serif; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px max(16px, 4vw); border-bottom: 1px solid var(--line); }
+.logo { display: flex; align-items: center; gap: 10px; font: 700 20px "Outfit", sans-serif; color: inherit; text-decoration: none; }
+.tile { width: 32px; height: 32px; border-radius: 8px; background: var(--green); color: #fff; display: grid; place-items: center; font: 700 19px "Outfit", sans-serif; }
+main { max-width: 760px; margin: 0 auto; padding: 40px max(16px, 4vw); }
+h1 { font: 700 32px/1.1 "Outfit", sans-serif; margin: 0 0 8px; }
+h2 { font: 700 19px "Outfit", sans-serif; margin: 32px 0 10px; }
+p { color: var(--muted); margin: 0 0 20px; }
+button, label.btn { border: 0; border-radius: 10px; padding: 10px 16px; font: 700 15px "Figtree", sans-serif; cursor: pointer; background: var(--green); color: var(--ink); display: inline-block; }
+button:hover, label.btn:hover { background: var(--green-hover); color: #fff; }
+button.ghost { background: none; border: 1.5px solid var(--line); color: var(--text); }
+button.ghost:hover { border-color: var(--green); background: none; color: var(--text); }
+button.sm { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.drop { border: 2px dashed var(--line); border-radius: 14px; padding: 34px 20px; text-align: center; background: var(--panel); }
+.drop.over { border-color: var(--green); background: var(--green-soft); }
+.drop p { margin: 10px 0 0; font-size: 13.5px; }
+.status { margin-top: 12px; font-weight: 600; min-height: 1.4em; }
+.status.err { color: var(--magenta); }
+ul.cvs { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; }
+ul.cvs li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+ul.cvs li:last-child { border-bottom: 0; }
+.name { font-weight: 600; word-break: break-word; }
+.when { color: var(--muted); font-size: 13px; }
+.right { display: flex; align-items: center; gap: 10px; }
+.chip { font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 99px; }
+.chip.new { background: var(--amber-soft); color: var(--amber); }
+.chip.done { background: var(--green-soft); color: var(--green-hover); }
+.empty { color: var(--muted); padding: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <a class="logo" href="app.html"><span class="tile">G</span>CapLynk</a>
+  <button class="ghost" id="signOut" type="button">Sign out</button>
+</header>
+<main>
+  <h1>Applicant Data</h1>
+  <p>Upload your latest CV. The CapLynk team reviews it against standard skill frameworks and will contact you on WhatsApp about suitable roles.</p>
+
+  <div class="drop" id="drop">
+    <label class="btn" for="cvFile">Browse CV</label>
+    <input id="cvFile" type="file" accept=".pdf,.docx,.txt" hidden>
+    <p>or drop the file here. PDF, DOCX or TXT, up to 10 MB.</p>
+    <div class="status" id="status" role="status"></div>
+  </div>
+
+  <h2>Your uploads</h2>
+  <ul class="cvs" id="cvList"><li class="empty">Loading…</li></ul>
+</main>
+
+<script src="firebase-config.js"></script>
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const h = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const cfg = window.CAPLYNK_FIREBASE || {}, sdk = window.CAPLYNK_FIREBASE_SDK;
+const status = (msg, err) => { $("status").textContent = msg; $("status").className = "status" + (err ? " err" : ""); };
+const when = (iso) => new Date(iso).toLocaleString([], { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
+// ---------- CV text, extracted in the browser ----------
+const loadScript = (src) => new Promise((ok, bad) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = bad; document.head.appendChild(s); });
+const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+const MAMMOTH = "https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js";
+async function extractText(file) {
+  const ext = file.name.toLowerCase().split(".").pop();
+  if (ext === "txt") return file.text();
+  if (ext === "pdf") {
+    if (!window.pdfjsLib) { await loadScript(PDFJS + "pdf.min.js"); window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.js"; }
+    const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+    let out = "";
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const c = await (await pdf.getPage(p)).getTextContent();
+      out += c.items.map((i) => i.str + (i.hasEOL ? "\n" : " ")).join("") + "\n";
+    }
+    return out;
+  }
+  if (ext === "docx") {
+    if (!window.mammoth) await loadScript(MAMMOTH);
+    return (await window.mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })).value;
+  }
+  throw new Error("Upload a PDF, DOCX or TXT file.");
+}
+
+if (!cfg.apiKey) {
+  $("cvList").innerHTML = '<li class="empty">Preview mode: add your Firebase config to upload CVs.</li>';
+} else {
+  const { initializeApp } = await import(sdk + "/firebase-app.js");
+  const auth = await import(sdk + "/firebase-auth.js");
+  const fs = await import(sdk + "/firebase-firestore.js");
+  const app = initializeApp(cfg), a = auth.getAuth(app), db = fs.getFirestore(app);
+  let user = null, mine = [];
+  $("signOut").onclick = () => auth.signOut(a);
+
+  function render() {
+    mine.sort((x, y) => y.addedAt.localeCompare(x.addedAt));
+    $("cvList").innerHTML = mine.length ? mine.map((c) => `
+      <li><div><div class="name">${h(c.fileName)}</div><div class="when">Uploaded ${when(c.addedAt)}</div></div>
+        <div class="right">${c.status === "new" ? '<span class="chip new">Received</span>' : '<span class="chip done">Reviewed</span>'}
+          ${c.status === "new" ? `<button class="ghost sm" data-del="${c.id}" type="button">Remove</button>` : ""}</div></li>`).join("")
+      : '<li class="empty">No CVs yet. Upload one above.</li>';
+    $("cvList").querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
+      const c = mine.find((x) => x.id === b.dataset.del);
+      if (!confirm("Remove " + c.fileName + "?")) return;
+      b.disabled = true;
+      try { await fs.deleteDoc(fs.doc(db, "cvs", c.id)); mine = mine.filter((x) => x.id !== c.id); render(); }
+      catch { b.disabled = false; status("Couldn't remove it. It may already be under review.", true); }
+    }));
+  }
+
+  async function upload(file) {
+    if (!file || !user) return;
+    if (file.size > 10 * 1024 * 1024) return status("That file is over 10 MB. Upload a smaller copy.", true);
+    status("Reading " + file.name + "…");
+    try {
+      const text = (await extractText(file)).replace(/[ \t]+\n/g, "\n").trim();
+      if (!text) return status("We couldn't read any text in that file. If it's a scanned image, upload a Word or text version.", true);
+      const c = {
+        id: crypto.randomUUID(), status: "new", fileName: file.name, cvText: text.slice(0, 60000), addedAt: new Date().toISOString(),
+        ownerUid: user.uid, ownerEmail: user.email || "", ownerName: user.displayName || "", name: "", skills: [],
+      };
+      await fs.setDoc(fs.doc(db, "cvs", c.id), c);
+      mine.push(c); render();
+      status("Thanks, " + file.name + " is uploaded. We'll be in touch on WhatsApp.");
+    } catch (e) {
+      status(e.message?.startsWith("Upload a") ? e.message : "Upload failed. Check your connection and try again.", true);
+    }
+  }
+  $("cvFile").onchange = (e) => { upload(e.target.files[0]); e.target.value = ""; };
+  const d = $("drop");
+  d.ondragover = (e) => { e.preventDefault(); d.classList.add("over"); };
+  d.ondragleave = () => d.classList.remove("over");
+  d.ondrop = (e) => { e.preventDefault(); d.classList.remove("over"); upload(e.dataTransfer.files[0]); };
+
+  auth.onAuthStateChanged(a, async (u) => {
+    if (!u || (!u.emailVerified && u.providerData.some((x) => x.providerId === "password"))) {
+      if (u) await auth.signOut(a);
+      return location.replace("index.html");
+    }
+    user = u;
+    try {
+      const snap = await fs.getDocs(fs.query(fs.collection(db, "cvs"), fs.where("ownerUid", "==", u.uid)));
+      mine = snap.docs.map((x) => x.data());
+    } catch { status("Couldn't load your uploads. Refresh to try again.", true); }
+    render();
+  });
+}
+</script>
+</body>
+</html>
