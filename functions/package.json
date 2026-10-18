@@ -2,7 +2,7 @@
   "name": "caplynk-functions",
   "private": true,
   "main": "index.js",
-  "engines": { "node": "20" },
+  "engines": { "node": "22" },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.60.0",
     "firebase-admin": "^12.6.0",
