@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Profile created at sign-up: name, email, role (candidate | employer).
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+      // Each user reads and writes only their own assistant conversations.
+      match /chats/{chatId} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+      }
+    }
+  }
+}
