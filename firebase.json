@@ -41,12 +41,12 @@
     {
       "source": "functions",
       "codebase": "default",
-      "runtime": "nodejs20"
+      "runtime": "nodejs22"
     },
     {
       "source": "modules/functions",
       "codebase": "modules",
-      "runtime": "nodejs20"
+      "runtime": "nodejs22"
     }
   ],
   "firestore": {
