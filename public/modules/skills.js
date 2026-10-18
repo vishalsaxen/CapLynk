@@ -136,11 +136,16 @@
   }
 
   const NOT_NAME = /(curriculum|vitae|resume|résumé|profile|contact|address|phone|email|mobile|linkedin|summary|objective|page \d)/i;
+  // CV section headings ("Core Skills", "Work Experience") look like names to a naive parser.
+  const HEADING = /\b(skills?|experience|education|projects?|certifications?|achievements?|core|professional|work|career|technical|competenc(y|ies)|expertise|languages?|responsibilit(y|ies)|highlights|key|areas|tools|about|personal|details|declaration|references?|hobbies|interests|strengths|qualifications?|employment|history|training|awards|accomplishments|overview|internships?|publications)\b/i;
+  const ROLE_WORD = /\b(manager|designer|engineer|developer|analyst|consultant|lead|specialist|architect|officer|director|executive|coordinator|administrator|scientist|tester|writer|trainer|head|associate|intern|programmer|recruiter|accountant|strategist)\b/i;
+  const PLACE = /^([A-Za-z .'-]{2,40}),\s*(India|United Kingdom|UK|England|Scotland|Wales|Ireland|USA|United States|US|UAE|Dubai|Singapore|Canada|Australia|Germany|France|Netherlands|Malaysia|Philippines|Sri Lanka|Nepal|Bangladesh|Pakistan|South Africa|New Zealand|[A-Z][a-z]+ Pradesh|Maharashtra|Karnataka|Telangana|Tamil Nadu|Kerala|Haryana|Delhi|Gujarat|Rajasthan|West Bengal|Punjab)\b/i;
+  const titleCase = (t) => t.toLowerCase().replace(/(^|[\s'-])\p{L}/gu, (c) => c.toUpperCase());
+  const clean = (l) => l.replace(/^[\s\-–—•·*▪●◦>]+/, "").trim();
 
-  // Personal and contact details from CV text. Returns the same shape the Claude parser returns.
-  function parseCvText(text) {
+  function parseCvText(text, fileName) {
     const raw = String(text || "");
-    const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const lines = raw.split(/\r?\n/).map(clean).filter(Boolean);
     const email = (raw.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i) || [""])[0];
     const phone = ((raw.match(/(?:\+|00)?\d[\d \t().-]{7,}\d/g) || []).find((p) => {
       const d = p.replace(/\D/g, "");
@@ -151,23 +156,44 @@
       const m = raw.match(new RegExp("^\\s*(?:" + label + ")\\s*[:\\-–]\\s*(.+)$", "im"));
       return m ? m[1].trim() : "";
     };
+    // Hints from the file name ("Hasheena_Resume.docx") and the email ("haseena917@...").
+    const fileWords = String(fileName || "").replace(/\.[a-z0-9]+$/i, "").split(/[^A-Za-z]+/)
+      .filter((w) => w.length > 1 && !/^(cv|resume|résumé|updated|final|new|latest|profile|copy|doc|v\d*)$/i.test(w));
+    const mailWord = email.split("@")[0].replace(/[^a-z]/gi, "").toLowerCase();
+    const hinted = (l) => l.toLowerCase().split(/\s+/).some((w) => w.length > 2 &&
+      (fileWords.some((f) => f.toLowerCase() === w) || (mailWord.length > 2 && (mailWord.startsWith(w) || w.startsWith(mailWord.slice(0, 4))))));
+    const nameLike = (l) => {
+      const words = l.replace(/[,|•·].*$/, "").trim().split(/\s+/);
+      return words.length >= 1 && words.length <= 4 && !NOT_NAME.test(l) && !HEADING.test(l) && !ROLE_WORD.test(l) &&
+        !/[@\d:]/.test(l) && words.every((w) => /^[A-Za-zÀ-ÖØ-öø-ÿ'’.-]+$/.test(w));
+    };
+
     let name = labelled("name|full name|candidate name");
     let nameIdx = -1;
     if (!name) {
-      nameIdx = lines.slice(0, 8).findIndex((l) => {
-        const words = l.replace(/[,|•·].*$/, "").trim().split(/\s+/);
-        return words.length >= 2 && words.length <= 4 && !NOT_NAME.test(l) && !/[@\d]/.test(l) &&
-          words.every((w) => /^[A-Za-zÀ-ÖØ-öø-ÿ'’.-]+$/.test(w));
-      });
+      const top = lines.slice(0, 12);
+      // A line that matches the file name or email wins; otherwise the first two-to-four-word name-like line.
+      nameIdx = top.findIndex((l) => nameLike(l) && hinted(l));
+      if (nameIdx < 0) nameIdx = top.findIndex((l) => nameLike(l) && l.split(/\s+/).length >= 2);
       if (nameIdx >= 0) name = lines[nameIdx].replace(/[,|•·].*$/, "").trim();
+      else if (fileWords.length) name = fileWords.slice(0, 3).join(" ");
     }
-    if (name && name === name.toUpperCase()) name = name.toLowerCase().replace(/(^|[\s'-])\p{L}/gu, (c) => c.toUpperCase());
-    let headline = labelled("title|current role|position|headline");
-    if (!headline && nameIdx >= 0) {
-      const next = lines[nameIdx + 1] || "";
-      if (next.length < 90 && !/[@]/.test(next) && !/\d{6,}/.test(next.replace(/\D/g, ""))) headline = next.replace(/\s*[|•·]\s*.*$/, "");
+    if (name && (name === name.toUpperCase() || name === name.toLowerCase())) name = titleCase(name);
+
+    let headline = labelled("title|current role|current title|position|headline|designation");
+    if (!headline) {
+      const near = nameIdx >= 0 ? lines.slice(nameIdx + 1, nameIdx + 4) : [];
+      const pick = (l) => l.length < 90 && ROLE_WORD.test(l) && !/[@]/.test(l) && !/\d{6,}/.test(l.replace(/\D/g, "")) && !/^(skills?|experience)\b/i.test(l);
+      headline = near.find(pick) || lines.slice(0, 15).find(pick) || "";
+      headline = headline.replace(/\s*[|•·].*$/, "").replace(/\s+(with|having)\s.*$/i, "").replace(/[.,;:]+$/, "").trim();
     }
-    const location = labelled("location|address|based in|city");
+    let location = labelled("location|address|based in|city|current location");
+    if (!location) {
+      for (const l of lines.slice(0, 15)) {
+        for (const part of l.split(/\s*[|•·]\s*/)) { const m = part.match(PLACE); if (m) { location = m[0].trim(); break; } }
+        if (location) break;
+      }
+    }
     const years = yearsOfExperience(raw);
     const level = seniorityLevel(headline + " " + raw.slice(0, 1500), years);
     const skills = findSkills(raw).slice(0, 12).map((s) => ({

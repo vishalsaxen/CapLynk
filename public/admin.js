@@ -125,10 +125,11 @@
   async function parseCandidate(c, quiet) {
     let p, by = "heuristic";
     try { p = (await api("/api/profiles", { action: "cv", text: c.cvText })).profile; by = "claude"; }
-    catch (e) { if (LIVE && !quiet) toast("Claude parse unavailable, used the built-in parser."); p = S.parseCvText(c.cvText); }
+    catch (e) { if (LIVE && !quiet) toast("Claude parse unavailable, used the built-in parser."); p = S.parseCvText(c.cvText, c.fileName); }
     const valid = (p.skills || []).filter((s) => S.BY_CODE[s.code]).map((s) => ({ code: s.code, level: Math.max(1, Math.min(7, +s.level || 3)), evidence: s.evidence || "" }));
     Object.assign(c, {
-      name: p.name || c.name || accountName(c), email: p.email || c.email || accountEmail(c), phone: p.phone || "", location: p.location || "",
+      // The name a candidate signed up with beats the offline parser's guess; Claude reads the CV properly.
+      name: (by === "claude" ? p.name || accountName(c) : accountName(c) || p.name) || c.name || "", email: p.email || c.email || accountEmail(c), phone: p.phone || "", location: p.location || "",
       linkedin: p.linkedin || "", headline: p.headline || "", yearsExperience: p.yearsExperience ?? null,
       summary: p.summary || c.summary || "", skills: valid, status: "parsed", parsedAt: now(), parsedBy: by,
     });
@@ -453,7 +454,11 @@
           <label class="f">Location<input data-r="location" value="${h(r.location)}"></label>
         </div>
         <label class="f" style="margin-top:12px">Job description<textarea data-r="description" rows="6" placeholder="Paste the client's job description">${h(r.description)}</textarea></label>
-        <div class="row" style="margin-top:10px"><button class="btn ghost sm" id="extractBtn" type="button">Build skill profile from description</button></div>
+        <div class="row" style="margin-top:10px">
+          <label class="btn ghost sm" for="jdFile">Upload JD file</label>
+          <input id="jdFile" type="file" accept=".pdf,.docx,.txt,.md" hidden>
+          <button class="btn ghost sm" id="extractBtn" type="button">Build skill profile from description</button>
+        </div>
       </div>
       <div class="card"><h3>Job skill profile (SFIA) <button class="btn ghost sm" id="addReqBtn" type="button">Add skill</button></h3>${skillTable(r.skills, "role")}</div>
       <div class="card"><h3>Matching candidates <span class="muted" style="font:500 13px Figtree">${parsed.length} parsed candidates ranked</span></h3>
@@ -470,6 +475,17 @@
     $("roleDetail").querySelectorAll("[data-r]").forEach((el) => (el.onchange = () => { r[el.dataset.r] = el.value.trim(); save("roles", r); renderRoles(); }));
     wireSkillTable(r.skills, () => save("roles", r), "role");
     $("addReqBtn").onclick = () => { r.skills.push({ code: unusedCode(r.skills), minLevel: 3, mustHave: false }); save("roles", r); renderRoles(); };
+    $("jdFile").onchange = async (e) => {
+      const f = e.target.files[0]; e.target.value = "";
+      if (!f) return;
+      try {
+        const text = (await extractText(f)).replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+        if (!text) return toast(f.name + " has no readable text (scanned image?)");
+        r.description = text.slice(0, 30000); r.jdFileName = f.name;
+        await save("roles", r); renderRoles();
+        toast("Job description loaded from " + f.name + ". Edit it if needed, then build the skill profile.");
+      } catch (err) { toast(err.message || "Couldn't read " + f.name); }
+    };
     $("extractBtn").onclick = async () => {
       const desc = $("roleDetail").querySelector("[data-r=description]").value.trim(); r.description = desc;
       if (!desc) return toast("Paste the job description first.");
