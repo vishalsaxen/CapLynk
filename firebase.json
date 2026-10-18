@@ -1,18 +1,72 @@
 {
   "hosting": {
     "public": "public",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
     "rewrites": [
-      { "source": "/api/chat", "function": { "functionId": "chat", "region": "us-central1" } }
+      {
+        "source": "/api/chat",
+        "function": {
+          "functionId": "chat",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/profiles",
+        "function": {
+          "functionId": "profiles",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/whatsapp/send",
+        "function": {
+          "functionId": "waSend",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/whatsapp/webhook",
+        "function": {
+          "functionId": "waWebhook",
+          "region": "us-central1"
+        }
+      }
     ]
   },
-  "functions": [{ "source": "functions", "codebase": "default", "runtime": "nodejs20" }],
-  "firestore": { "rules": "firestore.rules" },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "runtime": "nodejs20"
+    },
+    {
+      "source": "modules/functions",
+      "codebase": "modules",
+      "runtime": "nodejs20"
+    }
+  ],
+  "firestore": {
+    "rules": "firestore.rules"
+  },
   "emulators": {
-    "functions": { "port": 5001 },
-    "firestore": { "port": 8080 },
-    "hosting": { "port": 5000 },
-    "auth": { "port": 9099 },
-    "ui": { "enabled": true }
+    "functions": {
+      "port": 5001
+    },
+    "firestore": {
+      "port": 8080
+    },
+    "hosting": {
+      "port": 5000
+    },
+    "auth": {
+      "port": 9099
+    },
+    "ui": {
+      "enabled": true
+    }
   }
 }

@@ -6,6 +6,8 @@ CapLynk is a skills-based hiring platform from Gaplyn Services. It matches candi
 public/index.html      Create account / sign in (email + password, Google) — the entry to the site
 public/app.html        Signed-in home; sends signed-out visitors back to index.html
 public/assistant.html  CapLynk Assistant chat (Claude)
+public/modules/       Recruiter workspace: CV parser, WhatsApp send + tracker, SFIA matching (see modules/README.md)
+modules/functions/    Cloud Functions for the workspace: profiles, waSend, waWebhook
 public/firebase-config.js  Your Firebase web config (shared by all pages)
 functions/index.js     Cloud Function that calls the Claude API and streams the reply
 firebase.json          Hosting + Functions + Firestore config (/api/chat → chat function)

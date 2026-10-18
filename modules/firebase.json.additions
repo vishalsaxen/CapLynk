@@ -1,0 +1,9 @@
+{
+  "_note": "Merge into firebase.json. Rewrites go BEFORE any catch-all; the functions entry joins the existing functions array.",
+  "hosting.rewrites": [
+    { "source": "/api/profiles", "function": { "functionId": "profiles", "region": "us-central1" } },
+    { "source": "/api/whatsapp/send", "function": { "functionId": "waSend", "region": "us-central1" } },
+    { "source": "/api/whatsapp/webhook", "function": { "functionId": "waWebhook", "region": "us-central1" } }
+  ],
+  "functions[]": { "source": "modules/functions", "codebase": "modules", "runtime": "nodejs20" }
+}

@@ -1,0 +1,7 @@
+// Add inside `match /databases/{database}/documents { ... }` in firestore.rules.
+// Recruiter data for modules 1-4: each user reads and writes only their own.
+match /users/{uid}/candidates/{id} { allow read, write: if request.auth != null && request.auth.uid == uid; }
+match /users/{uid}/roles/{id} { allow read, write: if request.auth != null && request.auth.uid == uid; }
+match /users/{uid}/conversations/{id} { allow read, write: if request.auth != null && request.auth.uid == uid; }
+// Phone-to-candidate index used by the WhatsApp webhook: server only.
+match /waIndex/{phone} { allow read, write: if false; }
