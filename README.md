@@ -14,7 +14,7 @@ firestore.rules        Each user can only read/write their own chats
 
 ## Accounts
 
-Sign-up creates a Firebase Auth user plus a profile at `users/{uid}` with `name`, `email` and `role` (`candidate` or `employer`), and sends a verification email. Until `firebase-config.js` has an `apiKey`, pages run in preview mode and nothing is saved.
+People can sign in with email + password, Google, or a mobile number and 6-digit SMS code (OTP). Sign-up creates a Firebase Auth user plus a profile at `users/{uid}` with `name`, `email` and `role` (`candidate` or `employer`), and sends a verification email. Until `firebase-config.js` has an `apiKey`, pages run in preview mode and nothing is saved.
 
 ## How the assistant fits together
 
@@ -24,7 +24,7 @@ Browser (Firebase Hosting) → `POST /api/chat` with the user's Firebase ID toke
 
 1. Create a Firebase project at https://console.firebase.google.com (Blaze plan is needed for Functions that call external APIs).
 2. Enable **Authentication → Google** and create a **Firestore** database.
-3. Enable **Authentication → Email/Password** too. Add a Web app and copy its config into `public/firebase-config.js`.
+3. Enable **Authentication → Email/Password** and **Phone** too (Phone needs the Blaze plan to send real SMS; add test numbers under Phone → *Phone numbers for testing* to try it free). Add a Web app and copy its config into `public/firebase-config.js`.
 4. Put your project id in `.firebaserc`.
 5. Install and deploy:
 

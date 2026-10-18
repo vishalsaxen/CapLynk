@@ -158,6 +158,11 @@ form { display: flex; flex-direction: column; gap: 14px; }
 .alert.info { color: var(--text); border-color: var(--green); background: color-mix(in srgb, var(--green) 9%, transparent); }
 .preview-note { font-size: 12px; color: var(--muted); border: 1px dashed var(--line); border-radius: 10px; padding: 9px 12px; }
 .preview-note b { color: var(--magenta); font-weight: 700; }
+.btn-phone { display: flex; align-items: center; justify-content: center; gap: 10px; border: 1.5px solid var(--line); background: var(--field); border-radius: 10px; padding: 11px 16px; font-weight: 600; cursor: pointer; }
+.btn-phone:hover { border-color: var(--text); }
+.otp { font: 600 26px/1 var(--font-mono) !important; letter-spacing: 0.5em; text-align: center; padding: 14px 13px !important; }
+.back { align-self: flex-start; }
+.resend { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
 .legal { font-size: 12px; color: var(--muted); text-align: center; margin: 0; }
 
 .done { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
@@ -277,6 +282,35 @@ form { display: flex; flex-direction: column; gap: 14px; }
             <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
             <span id="googleLabel">Continue with Google</span>
           </button>
+          <button class="btn-phone" id="phoneBtn" type="button">
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"></rect><circle cx="12" cy="18" r="1.3" fill="currentColor"></circle></svg>
+            <span id="phoneLabel">Continue with phone number</span>
+          </button>
+        </form>
+
+        <form id="phoneForm" novalidate hidden style="margin-top:22px">
+          <button type="button" class="link back" id="phoneBack">← Use email instead</button>
+          <div class="field" id="phoneNameField" hidden>
+            <label for="phoneName">Full name</label>
+            <input id="phoneName" autocomplete="name" placeholder="Priya Sharma">
+            <div class="err" id="phoneNameErr"></div>
+          </div>
+          <div class="field" id="phoneStep">
+            <label for="phone">Mobile number</label>
+            <input id="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+91 98765 43210">
+            <div class="hint">Start with your country code, like +91 or +44. We'll text you a 6-digit code.</div>
+            <div class="err" id="phoneErr"></div>
+          </div>
+          <div class="field" id="codeStep" hidden>
+            <label for="otp">Enter the 6-digit code</label>
+            <div class="hint" id="codeSentTo"></div>
+            <input id="otp" class="otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*" placeholder="······">
+            <div class="err" id="otpErr"></div>
+            <div class="resend"><span id="resendTimer"></span><button type="button" class="link" id="changeNumber">Change number</button></div>
+          </div>
+          <div class="alert" id="phoneAlert" role="alert" hidden></div>
+          <button class="btn-primary" id="phoneSubmit" type="submit">Send code</button>
+          <div id="recaptcha"></div>
         </form>
 
         <div class="preview-note" id="previewNote" hidden style="margin-top:18px"><b>Preview</b> · Firebase isn't connected here, so nothing is saved. Add your Firebase config to create real accounts.</div>
@@ -316,6 +350,7 @@ function setMode(next) {
   $("password").autocomplete = up ? "new-password" : "current-password";
   $("submitBtn").textContent = up ? "Create account" : "Sign in";
   $("googleLabel").textContent = up ? "Sign up with Google" : "Continue with Google";
+  $("phoneLabel").textContent = up ? "Sign up with phone number" : "Continue with phone number";
   clearErrors(); hideAlert();
 }
 $("tabSignin").onclick = () => setMode("signin");
@@ -445,6 +480,86 @@ $("forgotBtn").onclick = async () => {
   try { await fb.auth.sendPasswordResetEmail(fb.a, email); showAlert("Check " + email + " for a link to reset your password.", "info"); }
   catch (err) { showAlert(friendly(err.code)); }
 };
+
+/* ---------- Phone + SMS code (OTP) ---------- */
+let confirmation = null, recaptcha = null, resendAt = 0, timer = null;
+const E164 = /^\+[1-9]\d{7,14}$/;
+const normPhone = () => $("phone").value.replace(/[\s()-]/g, "");
+function phoneAlert(msg, kind = "error") { const a = $("phoneAlert"); a.textContent = msg; a.className = "alert " + kind; a.hidden = !msg; }
+function showPhone(on) {
+  $("authForm").hidden = on; $("phoneForm").hidden = !on; $("tabSignin").parentElement.hidden = on;
+  $("phoneNameField").hidden = !(on && mode === "signup");
+  if (on) { phoneStep(); $(mode === "signup" ? "phoneName" : "phone").focus(); }
+}
+function phoneStep() {
+  confirmation = null; $("phoneStep").hidden = false; $("codeStep").hidden = true;
+  $("phoneSubmit").textContent = "Send code"; phoneAlert(""); clearInterval(timer);
+}
+function codeStep(number) {
+  $("phoneStep").hidden = true; $("codeStep").hidden = false; $("otp").value = ""; $("otpErr").textContent = "";
+  $("codeSentTo").textContent = "Sent to " + number + ".";
+  $("phoneSubmit").textContent = "Verify and continue"; $("otp").focus();
+  resendAt = Date.now() + 30000; tick(); clearInterval(timer); timer = setInterval(tick, 1000);
+}
+function tick() {
+  const left = Math.ceil((resendAt - Date.now()) / 1000), el = $("resendTimer");
+  if (left > 0) { el.textContent = "Resend code in " + left + "s"; return; }
+  clearInterval(timer); el.textContent = "";
+  const b = document.createElement("button"); b.type = "button"; b.className = "link"; b.textContent = "Resend code";
+  b.onclick = () => sendCode(); el.append(b);
+}
+function phoneFriendly(code) {
+  return ({
+    "auth/invalid-phone-number": "That number doesn't look right. Include the country code, like +91.",
+    "auth/invalid-verification-code": "That code isn't right. Check the SMS and try again.",
+    "auth/code-expired": "That code has expired. Tap Resend code for a new one.",
+    "auth/too-many-requests": "Too many attempts from this device. Wait a while and try again.",
+    "auth/quota-exceeded": "We can't send SMS codes right now. Use email sign-in for now.",
+    "auth/captcha-check-failed": "The security check failed. Refresh the page and try again."
+  })[code] || friendly(code);
+}
+async function sendCode() {
+  const number = normPhone();
+  $("phoneErr").textContent = ""; $("phoneNameErr").textContent = ""; phoneAlert("");
+  if (mode === "signup" && $("phoneName").value.trim().length < 2) { $("phoneNameErr").textContent = "Enter your full name."; return; }
+  if (!E164.test(number)) { $("phoneErr").textContent = "Enter your number with the country code, like +91 98765 43210."; return; }
+  if (PREVIEW) return codeStep(number);
+  $("phoneSubmit").disabled = true;
+  try {
+    const { auth } = fb;
+    if (!recaptcha) recaptcha = new auth.RecaptchaVerifier(fb.a, "recaptcha", { size: "invisible" });
+    confirmation = await auth.signInWithPhoneNumber(fb.a, number, recaptcha);
+    codeStep(number);
+  } catch (err) {
+    phoneAlert(phoneFriendly(err.code));
+    recaptcha?.clear(); recaptcha = null;
+  } finally { $("phoneSubmit").disabled = false; }
+}
+async function verifyCode() {
+  const code = $("otp").value.trim();
+  if (!/^\d{6}$/.test(code)) { $("otpErr").textContent = "Enter all 6 digits."; return; }
+  if (PREVIEW) {
+    return done("Phone verified", "In the live site Firebase checks the SMS code sent to " + normPhone() + " and opens CapLynk.");
+  }
+  $("phoneSubmit").disabled = true;
+  try {
+    const cred = await confirmation.confirm(code);
+    if (fb.auth.getAdditionalUserInfo(cred)?.isNewUser) {
+      const name = $("phoneName").value.trim();
+      if (name) await fb.auth.updateProfile(cred.user, { displayName: name });
+      const { doc, setDoc, serverTimestamp } = fb.fs;
+      await setDoc(doc(fb.db, "users", cred.user.uid), { name, phone: cred.user.phoneNumber, role: role(), createdAt: serverTimestamp() }, { merge: true });
+    }
+    location.href = HOME;
+  } catch (err) {
+    $("otpErr").textContent = phoneFriendly(err.code); $("phoneSubmit").disabled = false;
+  }
+}
+$("phoneBtn").onclick = () => { hideAlert(); showPhone(true); };
+$("phoneBack").onclick = () => showPhone(false);
+$("changeNumber").onclick = () => { phoneStep(); $("phone").focus(); };
+$("otp").addEventListener("input", () => { $("otp").value = $("otp").value.replace(/\D/g, "").slice(0, 6); if ($("otp").value.length === 6) verifyCode(); });
+$("phoneForm").addEventListener("submit", (e) => { e.preventDefault(); confirmation || (PREVIEW && !$("codeStep").hidden) ? verifyCode() : sendCode(); });
 
 /* ---------- Boot ---------- */
 setMode(location.hash === "#signup" ? "signup" : "signin");
