@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+</head>
+<body>
+<!-- CAPLYNK:BODY-START -->
+<title>CapLynk Sign In</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: split screen. Parrot Green brand panel on the left shows a skills match; the account form sits on white at the right. Stacks on phones with the form first. */
+:root {
+  --green: #1FB33A;
+  --green-hover: #16892C;
+  --green-2: #8BE04E;
+  --magenta: #C026D3;
+  --ink: #101827;
+  --white: #FFFFFF;
+  --bg: #FFFFFF;
+  --surface: #F4F7F4;
+  --text: #101827;
+  --muted: #566070;
+  --line: #DCE3DD;
+  --field: #FFFFFF;
+  --danger: #B42318;
+  --focus: #1FB33A;
+  --font-display: "Outfit", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Figtree", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0B111C; --surface: #121A27; --text: #EEF2F6; --muted: #9AA6B6; --line: #253041;
+    --field: #0F1622; --danger: #F97066; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0B111C; --surface: #121A27; --text: #EEF2F6; --muted: #9AA6B6; --line: #253041;
+  --field: #0F1622; --danger: #F97066; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 var(--font-body); }
+button, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.shell { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); min-height: 100%; }
+
+/* Brand panel */
+.brand {
+  background: linear-gradient(135deg, var(--green) 0%, var(--green-2) 100%);
+  color: var(--ink);
+  display: flex; flex-direction: column; justify-content: space-between; gap: 40px;
+  padding-block: 40px; padding-left: max(48px, env(safe-area-inset-left, 0px)); padding-right: 48px;
+}
+.logo { display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; }
+.logo svg { width: 40px; height: 40px; flex: none; }
+.logo-name { font: 700 24px/1 var(--font-display); letter-spacing: -0.01em; }
+.logo-by { font-size: 12px; font-weight: 600; opacity: 0.75; }
+.pitch h1 { font: 700 clamp(34px, 4.2vw, 54px)/1.04 var(--font-display); letter-spacing: -0.025em; margin: 0 0 16px; text-wrap: balance; max-width: 13ch; }
+.pitch p { margin: 0; font-size: 17px; max-width: 42ch; font-weight: 500; }
+
+.match {
+  background: var(--ink); color: #EEF2F6; border-radius: 18px; padding: 20px 22px;
+  display: flex; flex-direction: column; gap: 14px; max-width: 440px;
+  box-shadow: 0 24px 48px -24px rgb(16 24 39 / 0.55);
+}
+.match-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.match-role { font: 600 17px/1.25 var(--font-display); }
+.match-sub { font-size: 13px; color: #9AA6B6; }
+.badge { font: 500 11px/1 var(--font-mono); letter-spacing: 0.06em; background: var(--magenta); color: #fff; padding: 5px 9px; border-radius: 99px; white-space: nowrap; }
+.skills { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.skill { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; font-size: 14px; }
+.skill .code { font: 500 11px/1 var(--font-mono); color: #9AA6B6; }
+.bar { grid-column: 1 / -1; height: 6px; border-radius: 99px; background: #253041; overflow: hidden; }
+.bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--green), var(--green-2)); }
+.lvl { font: 500 12px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
+.lvl.gap { color: #E879F9; }
+.score { display: flex; align-items: baseline; justify-content: space-between; border-top: 1px solid #253041; padding-top: 12px; font-size: 13px; color: #9AA6B6; }
+.score b { font: 700 28px/1 var(--font-display); color: var(--green-2); font-variant-numeric: tabular-nums; }
+.brand-foot { font-size: 13px; font-weight: 600; opacity: 0.8; }
+
+/* Form side */
+.panel {
+  display: flex; align-items: center; justify-content: center;
+  padding-block: 40px; padding-right: max(24px, env(safe-area-inset-right, 0px)); padding-left: 24px;
+}
+.card { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 22px; }
+.card h2 { font: 700 30px/1.15 var(--font-display); letter-spacing: -0.02em; margin: 0; }
+.card .lead { margin: 6px 0 0; color: var(--muted); }
+
+.tabs { display: grid; grid-template-columns: 1fr 1fr; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 4px; }
+.tab { border: 0; background: none; border-radius: 9px; padding: 9px 10px; font-weight: 600; cursor: pointer; color: var(--muted); }
+.tab[aria-selected="true"] { background: var(--bg); color: var(--text); box-shadow: 0 1px 3px rgb(16 24 39 / 0.12); }
+
+form { display: flex; flex-direction: column; gap: 14px; }
+.roles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; border: 0; padding: 0; margin: 0; }
+.roles legend { font-weight: 600; font-size: 14px; margin-bottom: 8px; padding: 0; }
+.role { position: relative; }
+.role input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+.role label {
+  display: flex; flex-direction: column; gap: 2px; border: 1.5px solid var(--line); border-radius: 12px;
+  padding: 11px 13px; cursor: pointer; background: var(--field);
+}
+.role label b { font-weight: 700; }
+.role label span { font-size: 13px; color: var(--muted); }
+.role input:checked + label { border-color: var(--green); background: color-mix(in srgb, var(--green) 9%, var(--field)); }
+.role input:focus-visible + label { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-weight: 600; font-size: 14px; }
+.field-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.input-wrap { position: relative; }
+.field input {
+  width: 100%; border: 1.5px solid var(--line); border-radius: 10px; padding: 11px 13px; background: var(--field);
+}
+.field input:focus { border-color: var(--green); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 22%, transparent); }
+.field input[aria-invalid="true"] { border-color: var(--danger); }
+.input-wrap input { padding-right: 64px; }
+.peek { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: none; font-size: 13px; font-weight: 600; color: var(--muted); padding: 6px 8px; cursor: pointer; border-radius: 6px; }
+.err { font-size: 13px; color: var(--danger); min-height: 0; }
+.meter { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.meter i { height: 4px; border-radius: 99px; background: var(--line); }
+.meter[data-score="1"] i:nth-child(-n+1) { background: var(--danger); }
+.meter[data-score="2"] i:nth-child(-n+2) { background: #E0A100; }
+.meter[data-score="3"] i:nth-child(-n+3) { background: var(--green); }
+.meter[data-score="4"] i { background: var(--green-hover); }
+.hint { font-size: 12px; color: var(--muted); }
+
+.link { background: none; border: 0; padding: 0; color: var(--green-hover); font-weight: 600; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; font-size: 13px; }
+:root:not([data-theme="light"]) .link { color: var(--green); }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .link { color: var(--green-hover); } }
+:root[data-theme="light"] .link { color: var(--green-hover); }
+
+.check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; }
+.check input { margin-top: 3px; accent-color: var(--green); width: 16px; height: 16px; flex: none; }
+
+.btn-primary {
+  border: 0; border-radius: 10px; padding: 12px 16px; font-weight: 700; font-size: 16px; cursor: pointer;
+  background: var(--green); color: var(--ink);
+}
+.btn-primary:hover { background: var(--green-hover); color: #fff; }
+.btn-primary:disabled { opacity: 0.6; cursor: progress; }
+.divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; }
+.divider::before, .divider::after { content: ""; height: 1px; background: var(--line); flex: 1; }
+.btn-google {
+  display: flex; align-items: center; justify-content: center; gap: 10px; border: 1.5px solid var(--line);
+  background: var(--field); border-radius: 10px; padding: 11px 16px; font-weight: 600; cursor: pointer;
+}
+.btn-google:hover { border-color: var(--text); }
+.btn-google svg { width: 18px; height: 18px; }
+
+.alert { border-radius: 10px; padding: 11px 13px; font-size: 14px; border: 1px solid; }
+.alert.error { color: var(--danger); border-color: currentColor; background: color-mix(in srgb, var(--danger) 7%, transparent); }
+.alert.info { color: var(--text); border-color: var(--green); background: color-mix(in srgb, var(--green) 9%, transparent); }
+.preview-note { font-size: 12px; color: var(--muted); border: 1px dashed var(--line); border-radius: 10px; padding: 9px 12px; }
+.preview-note b { color: var(--magenta); font-weight: 700; }
+.btn-phone { display: flex; align-items: center; justify-content: center; gap: 10px; border: 1.5px solid var(--line); background: var(--field); border-radius: 10px; padding: 11px 16px; font-weight: 600; cursor: pointer; }
+.btn-phone:hover { border-color: var(--text); }
+.otp { font: 600 26px/1 var(--font-mono) !important; letter-spacing: 0.5em; text-align: center; padding: 14px 13px !important; }
+.back { align-self: flex-start; }
+.resend { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.legal { font-size: 12px; color: var(--muted); text-align: center; margin: 0; }
+
+.done { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+.done .tick { width: 48px; height: 48px; border-radius: 14px; background: linear-gradient(135deg, var(--green), var(--green-2)); display: grid; place-items: center; color: var(--ink); font-size: 24px; font-weight: 700; }
+
+@media (max-width: 900px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .panel { order: -1; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 36px; }
+  .brand { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 32px; gap: 28px; }
+  .brand .logo { display: none; }
+  .mobile-logo { display: flex !important; }
+}
+.mobile-logo { display: none !important; }
+@media (prefers-reduced-motion: no-preference) {
+  .bar i { animation: fill 0.9s ease-out both; transform-origin: left; }
+  @keyframes fill { from { transform: scaleX(0.15); } to { transform: scaleX(1); } }
+}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="caplynk-logo" viewBox="0 0 40 40">
+    <rect width="40" height="40" rx="10" fill="#1FB33A"></rect>
+    <text x="20" y="28.5" text-anchor="middle" font-family="Outfit, Figtree, Arial, sans-serif" font-weight="700" font-size="24" fill="#FFFFFF">G</text>
+  </symbol>
+</svg>
+
+<div class="shell">
+  <section class="brand" aria-label="About CapLynk">
+    <a class="logo" href="#" aria-label="CapLynk home">
+      <svg><use href="#caplynk-logo"></use></svg>
+      <span><span class="logo-name">CapLynk</span><br><span class="logo-by">by Gaplyn Services</span></span>
+    </a>
+    <div class="pitch">
+      <h1>Hire for skills, not keywords.</h1>
+      <p>CapLynk matches candidates to client roles against standard skill frameworks like SFIA, so the best fit rises to the top even when the CV says it differently.</p>
+    </div>
+    <div class="match" aria-label="Example skills match">
+      <div class="match-head">
+        <div>
+          <div class="match-role">Senior Data Engineer</div>
+          <div class="match-sub">Example client role · matched on SFIA 9</div>
+        </div>
+        <span class="badge">SKILLS MATCH</span>
+      </div>
+      <ul class="skills">
+        <li class="skill"><span>Data engineering <span class="code">DENG</span></span><span class="lvl">L5 / L5</span><span class="bar"><i style="width:100%"></i></span></li>
+        <li class="skill"><span>Data modelling and design <span class="code">DTAN</span></span><span class="lvl">L5 / L4</span><span class="bar"><i style="width:100%"></i></span></li>
+        <li class="skill"><span>Programming <span class="code">PROG</span></span><span class="lvl gap">L4 / L5</span><span class="bar"><i style="width:80%"></i></span></li>
+      </ul>
+      <div class="score"><span>Candidate level / role level</span><span><b>92%</b> fit</span></div>
+    </div>
+    <div class="brand-foot">A Gaplyn Services platform</div>
+  </section>
+
+  <section class="panel">
+    <div class="card">
+      <a class="logo mobile-logo" href="#" aria-label="CapLynk home">
+        <svg><use href="#caplynk-logo"></use></svg>
+        <span><span class="logo-name">CapLynk</span><br><span class="logo-by">by Gaplyn Services</span></span>
+      </a>
+
+      <div id="authView">
+        <div>
+          <h2 id="heading">Welcome back</h2>
+          <p class="lead" id="lead">Sign in to see your matches.</p>
+        </div>
+
+        <div class="tabs" role="tablist" aria-label="Account" style="margin-top:22px">
+          <button class="tab" role="tab" id="tabSignin" aria-selected="true" aria-controls="authForm" type="button">Sign in</button>
+          <button class="tab" role="tab" id="tabSignup" aria-selected="false" aria-controls="authForm" type="button">Create account</button>
+        </div>
+
+        <form id="authForm" novalidate style="margin-top:22px">
+          <fieldset class="roles" id="roleField" hidden>
+            <legend>I'm joining as</legend>
+            <div class="role"><input type="radio" name="role" id="roleCandidate" value="candidate" checked><label for="roleCandidate"><b>Candidate</b><span>Get matched to roles</span></label></div>
+            <div class="role"><input type="radio" name="role" id="roleEmployer" value="employer"><label for="roleEmployer"><b>Employer</b><span>Find skilled people</span></label></div>
+          </fieldset>
+
+          <div class="field" id="nameField" hidden>
+            <label for="name">Full name</label>
+            <input id="name" name="name" autocomplete="name" placeholder="Priya Sharma">
+            <div class="err" id="nameErr"></div>
+          </div>
+
+          <div class="field">
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" autocomplete="email" placeholder="you@company.com">
+            <div class="err" id="emailErr"></div>
+          </div>
+
+          <div class="field">
+            <div class="field-row">
+              <label for="password">Password</label>
+              <button type="button" class="link" id="forgotBtn">Forgot password?</button>
+            </div>
+            <div class="input-wrap">
+              <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••">
+              <button type="button" class="peek" id="peekBtn" aria-controls="password">Show</button>
+            </div>
+            <div class="meter" id="meter" data-score="0" hidden><i></i><i></i><i></i><i></i></div>
+            <div class="hint" id="pwHint" hidden>At least 8 characters, with a number and a letter.</div>
+            <div class="err" id="passwordErr"></div>
+          </div>
+
+          <label class="check" id="termsField" hidden>
+            <input type="checkbox" id="terms">
+            <span>I agree to the CapLynk Terms and Privacy Policy.</span>
+          </label>
+          <div class="err" id="termsErr"></div>
+
+          <div class="alert" id="alert" role="alert" hidden></div>
+
+          <button class="btn-primary" id="submitBtn" type="submit">Sign in</button>
+          <div class="divider">or</div>
+          <button class="btn-google" id="googleBtn" type="button">
+            <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
+            <span id="googleLabel">Continue with Google</span>
+          </button>
+          <button class="btn-phone" id="phoneBtn" type="button">
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"></rect><circle cx="12" cy="18" r="1.3" fill="currentColor"></circle></svg>
+            <span id="phoneLabel">Continue with phone number</span>
+          </button>
+        </form>
+
+        <form id="phoneForm" novalidate hidden style="margin-top:22px">
+          <button type="button" class="link back" id="phoneBack">← Use email instead</button>
+          <div class="field" id="phoneNameField" hidden>
+            <label for="phoneName">Full name</label>
+            <input id="phoneName" autocomplete="name" placeholder="Priya Sharma">
+            <div class="err" id="phoneNameErr"></div>
+          </div>
+          <div class="field" id="phoneStep">
+            <label for="phone">Mobile number</label>
+            <input id="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+91 98765 43210">
+            <div class="hint">Start with your country code, like +91 or +44. We'll text you a 6-digit code.</div>
+            <div class="err" id="phoneErr"></div>
+          </div>
+          <div class="field" id="codeStep" hidden>
+            <label for="otp">Enter the 6-digit code</label>
+            <div class="hint" id="codeSentTo"></div>
+            <input id="otp" class="otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*" placeholder="······">
+            <div class="err" id="otpErr"></div>
+            <div class="resend"><span id="resendTimer"></span><button type="button" class="link" id="changeNumber">Change number</button></div>
+          </div>
+          <div class="alert" id="phoneAlert" role="alert" hidden></div>
+          <button class="btn-primary" id="phoneSubmit" type="submit">Send code</button>
+          <div id="recaptcha"></div>
+        </form>
+
+        <div class="preview-note" id="previewNote" hidden style="margin-top:18px"><b>Preview</b> · Firebase isn't connected here, so nothing is saved. Add your Firebase config to create real accounts.</div>
+      </div>
+
+      <div class="done" id="doneView" hidden>
+        <div class="tick">✓</div>
+        <h2 id="doneTitle">You're in</h2>
+        <p class="lead" id="doneText"></p>
+        <button class="btn-primary" id="doneBtn" type="button">Continue to CapLynk</button>
+      </div>
+
+      <p class="legal">© 2026 Gaplyn Services · CapLynk</p>
+    </div>
+  </section>
+</div>
+
+<script src="firebase-config.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let mode = "signin";           // "signin" | "signup"
+let fb = null;                 // { auth, a, fs, db } once Firebase loads
+const cfg = window.CAPLYNK_FIREBASE || {};
+const PREVIEW = !!window.claude || !cfg.apiKey;
+const HOME = "app.html";
+
+/* ---------- Mode switching ---------- */
+function setMode(next) {
+  mode = next;
+  const up = mode === "signup";
+  $("tabSignin").setAttribute("aria-selected", String(!up));
+  $("tabSignup").setAttribute("aria-selected", String(up));
+  $("heading").textContent = up ? "Create your account" : "Welcome back";
+  $("lead").textContent = up ? "Join CapLynk to match on skills, not keywords." : "Sign in to see your matches.";
+  $("roleField").hidden = !up; $("nameField").hidden = !up; $("termsField").hidden = !up;
+  $("meter").hidden = !up; $("pwHint").hidden = !up; $("forgotBtn").hidden = up;
+  $("password").autocomplete = up ? "new-password" : "current-password";
+  $("submitBtn").textContent = up ? "Create account" : "Sign in";
+  $("googleLabel").textContent = up ? "Sign up with Google" : "Continue with Google";
+  $("phoneLabel").textContent = up ? "Sign up with phone number" : "Continue with phone number";
+  clearErrors(); hideAlert();
+}
+$("tabSignin").onclick = () => setMode("signin");
+$("tabSignup").onclick = () => setMode("signup");
+$("peekBtn").onclick = () => {
+  const show = $("password").type === "password";
+  $("password").type = show ? "text" : "password";
+  $("peekBtn").textContent = show ? "Hide" : "Show";
+};
+
+/* ---------- Validation ---------- */
+function pwScore(p) {
+  let s = 0;
+  if (p.length >= 8) s++;
+  if (/[a-z]/i.test(p) && /\d/.test(p)) s++;
+  if (/[A-Z]/.test(p) && /[a-z]/.test(p)) s++;
+  if (/[^A-Za-z0-9]/.test(p) || p.length >= 14) s++;
+  return p ? Math.max(1, s) : 0;
+}
+$("password").addEventListener("input", () => { $("meter").dataset.score = pwScore($("password").value); });
+
+function setErr(id, msg) {
+  $(id + "Err").textContent = msg || "";
+  const input = $(id === "terms" ? "terms" : id);
+  if (input) input.setAttribute("aria-invalid", msg ? "true" : "false");
+}
+function clearErrors() { ["name", "email", "password", "terms"].forEach((id) => setErr(id, "")); }
+function validate() {
+  clearErrors(); let ok = true;
+  const email = $("email").value.trim(), pw = $("password").value;
+  if (mode === "signup" && $("name").value.trim().length < 2) { setErr("name", "Enter your full name."); ok = false; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setErr("email", "Enter a valid email address."); ok = false; }
+  if (mode === "signup") {
+    if (pw.length < 8 || !/[a-z]/i.test(pw) || !/\d/.test(pw)) { setErr("password", "Use at least 8 characters with a letter and a number."); ok = false; }
+    if (!$("terms").checked) { setErr("terms", "Accept the terms to create an account."); ok = false; }
+  } else if (!pw) { setErr("password", "Enter your password."); ok = false; }
+  return ok;
+}
+
+/* ---------- Feedback ---------- */
+function showAlert(msg, kind = "error") { const a = $("alert"); a.textContent = msg; a.className = "alert " + kind; a.hidden = false; }
+function hideAlert() { $("alert").hidden = true; }
+function busy(on) { $("submitBtn").disabled = on; $("googleBtn").disabled = on; }
+function friendly(code) {
+  return ({
+    "auth/invalid-credential": "That email and password don't match. Check them and try again.",
+    "auth/wrong-password": "That email and password don't match. Check them and try again.",
+    "auth/user-not-found": "No account uses that email. Create one instead.",
+    "auth/email-already-in-use": "An account already uses that email. Sign in instead.",
+    "auth/weak-password": "Choose a stronger password: 8+ characters with a letter and a number.",
+    "auth/invalid-email": "Enter a valid email address.",
+    "auth/too-many-requests": "Too many attempts. Wait a few minutes, or reset your password.",
+    "auth/popup-closed-by-user": "Google sign-in was closed before it finished.",
+    "auth/network-request-failed": "Can't reach the sign-in service. Check your connection."
+  })[code] || "Something went wrong signing you in. Try again.";
+}
+function done(title, text, go = true) {
+  $("authView").hidden = true; $("doneView").hidden = false;
+  $("doneTitle").textContent = title; $("doneText").textContent = text;
+  $("doneBtn").hidden = !go;
+}
+$("doneBtn").onclick = () => { if (!PREVIEW) location.href = HOME; else { $("doneView").hidden = true; $("authView").hidden = false; } };
+
+/* ---------- Firebase ---------- */
+async function loadFirebase() {
+  const sdk = window.CAPLYNK_FIREBASE_SDK;
+  const [{ initializeApp }, auth, fs] = await Promise.all([
+    import(sdk + "/firebase-app.js"), import(sdk + "/firebase-auth.js"), import(sdk + "/firebase-firestore.js")
+  ]);
+  const app = initializeApp(cfg);
+  fb = { auth, a: auth.getAuth(app), fs, db: fs.getFirestore(app) };
+  // Already signed in: go straight in.
+  auth.onAuthStateChanged(fb.a, (u) => { if (u && !$("submitBtn").disabled) location.replace(HOME); });
+}
+async function saveProfile(user, name, role) {
+  const { doc, setDoc, serverTimestamp } = fb.fs;
+  await setDoc(doc(fb.db, "users", user.uid), {
+    name: name || user.displayName || "", email: user.email, role, createdAt: serverTimestamp()
+  }, { merge: true });
+}
+const role = () => document.querySelector('input[name="role"]:checked').value;
+
+$("authForm").addEventListener("submit", async (e) => {
+  e.preventDefault(); hideAlert();
+  if (!validate()) return;
+  const email = $("email").value.trim(), pw = $("password").value, name = $("name").value.trim();
+  if (PREVIEW) {
+    return mode === "signup"
+      ? done("Account ready, " + name.split(" ")[0], "In the live site this creates a " + role() + " account in Firebase and opens CapLynk.")
+      : done("Signed in", "In the live site this checks " + email + " with Firebase and opens CapLynk.");
+  }
+  busy(true);
+  try {
+    const { auth } = fb;
+    if (mode === "signup") {
+      const cred = await auth.createUserWithEmailAndPassword(fb.a, email, pw);
+      await auth.updateProfile(cred.user, { displayName: name });
+      await saveProfile(cred.user, name, role());
+      auth.sendEmailVerification(cred.user).catch(() => {});
+    } else {
+      await auth.signInWithEmailAndPassword(fb.a, email, pw);
+    }
+    location.href = HOME;
+  } catch (err) {
+    showAlert(friendly(err.code)); busy(false);
+  }
+});
+
+$("googleBtn").onclick = async () => {
+  hideAlert();
+  if (PREVIEW) return done("Google sign-in", "In the live site this opens the Google account picker, then CapLynk.");
+  busy(true);
+  try {
+    const { auth } = fb;
+    const cred = await auth.signInWithPopup(fb.a, new auth.GoogleAuthProvider());
+    if (auth.getAdditionalUserInfo(cred)?.isNewUser) await saveProfile(cred.user, cred.user.displayName, role());
+    location.href = HOME;
+  } catch (err) {
+    showAlert(friendly(err.code)); busy(false);
+  }
+};
+
+$("forgotBtn").onclick = async () => {
+  const email = $("email").value.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setErr("email", "Enter your email first, then tap Forgot password."); $("email").focus(); return; }
+  if (PREVIEW) return showAlert("In the live site a reset link goes to " + email + ".", "info");
+  try { await fb.auth.sendPasswordResetEmail(fb.a, email); showAlert("Check " + email + " for a link to reset your password.", "info"); }
+  catch (err) { showAlert(friendly(err.code)); }
+};
+
+/* ---------- Phone + SMS code (OTP) ---------- */
+let confirmation = null, recaptcha = null, resendAt = 0, timer = null;
+const E164 = /^\+[1-9]\d{7,14}$/;
+const normPhone = () => $("phone").value.replace(/[\s()-]/g, "");
+function phoneAlert(msg, kind = "error") { const a = $("phoneAlert"); a.textContent = msg; a.className = "alert " + kind; a.hidden = !msg; }
+function showPhone(on) {
+  $("authForm").hidden = on; $("phoneForm").hidden = !on; $("tabSignin").parentElement.hidden = on;
+  $("phoneNameField").hidden = !(on && mode === "signup");
+  if (on) { phoneStep(); $(mode === "signup" ? "phoneName" : "phone").focus(); }
+}
+function phoneStep() {
+  confirmation = null; $("phoneStep").hidden = false; $("codeStep").hidden = true;
+  $("phoneSubmit").textContent = "Send code"; phoneAlert(""); clearInterval(timer);
+}
+function codeStep(number) {
+  $("phoneStep").hidden = true; $("codeStep").hidden = false; $("otp").value = ""; $("otpErr").textContent = "";
+  $("codeSentTo").textContent = "Sent to " + number + ".";
+  $("phoneSubmit").textContent = "Verify and continue"; $("otp").focus();
+  resendAt = Date.now() + 30000; tick(); clearInterval(timer); timer = setInterval(tick, 1000);
+}
+function tick() {
+  const left = Math.ceil((resendAt - Date.now()) / 1000), el = $("resendTimer");
+  if (left > 0) { el.textContent = "Resend code in " + left + "s"; return; }
+  clearInterval(timer); el.textContent = "";
+  const b = document.createElement("button"); b.type = "button"; b.className = "link"; b.textContent = "Resend code";
+  b.onclick = () => sendCode(); el.append(b);
+}
+function phoneFriendly(code) {
+  return ({
+    "auth/invalid-phone-number": "That number doesn't look right. Include the country code, like +91.",
+    "auth/invalid-verification-code": "That code isn't right. Check the SMS and try again.",
+    "auth/code-expired": "That code has expired. Tap Resend code for a new one.",
+    "auth/too-many-requests": "Too many attempts from this device. Wait a while and try again.",
+    "auth/quota-exceeded": "We can't send SMS codes right now. Use email sign-in for now.",
+    "auth/captcha-check-failed": "The security check failed. Refresh the page and try again."
+  })[code] || friendly(code);
+}
+async function sendCode() {
+  const number = normPhone();
+  $("phoneErr").textContent = ""; $("phoneNameErr").textContent = ""; phoneAlert("");
+  if (mode === "signup" && $("phoneName").value.trim().length < 2) { $("phoneNameErr").textContent = "Enter your full name."; return; }
+  if (!E164.test(number)) { $("phoneErr").textContent = "Enter your number with the country code, like +91 98765 43210."; return; }
+  if (PREVIEW) return codeStep(number);
+  $("phoneSubmit").disabled = true;
+  try {
+    const { auth } = fb;
+    if (!recaptcha) recaptcha = new auth.RecaptchaVerifier(fb.a, "recaptcha", { size: "invisible" });
+    confirmation = await auth.signInWithPhoneNumber(fb.a, number, recaptcha);
+    codeStep(number);
+  } catch (err) {
+    phoneAlert(phoneFriendly(err.code));
+    recaptcha?.clear(); recaptcha = null;
+  } finally { $("phoneSubmit").disabled = false; }
+}
+async function verifyCode() {
+  const code = $("otp").value.trim();
+  if (!/^\d{6}$/.test(code)) { $("otpErr").textContent = "Enter all 6 digits."; return; }
+  if (PREVIEW) {
+    return done("Phone verified", "In the live site Firebase checks the SMS code sent to " + normPhone() + " and opens CapLynk.");
+  }
+  $("phoneSubmit").disabled = true;
+  try {
+    const cred = await confirmation.confirm(code);
+    if (fb.auth.getAdditionalUserInfo(cred)?.isNewUser) {
+      const name = $("phoneName").value.trim();
+      if (name) await fb.auth.updateProfile(cred.user, { displayName: name });
+      const { doc, setDoc, serverTimestamp } = fb.fs;
+      await setDoc(doc(fb.db, "users", cred.user.uid), { name, phone: cred.user.phoneNumber, role: role(), createdAt: serverTimestamp() }, { merge: true });
+    }
+    location.href = HOME;
+  } catch (err) {
+    $("otpErr").textContent = phoneFriendly(err.code); $("phoneSubmit").disabled = false;
+  }
+}
+$("phoneBtn").onclick = () => { hideAlert(); showPhone(true); };
+$("phoneBack").onclick = () => showPhone(false);
+$("changeNumber").onclick = () => { phoneStep(); $("phone").focus(); };
+$("otp").addEventListener("input", () => { $("otp").value = $("otp").value.replace(/\D/g, "").slice(0, 6); if ($("otp").value.length === 6) verifyCode(); });
+$("phoneForm").addEventListener("submit", (e) => { e.preventDefault(); confirmation || (PREVIEW && !$("codeStep").hidden) ? verifyCode() : sendCode(); });
+
+/* ---------- Boot ---------- */
+setMode(location.hash === "#signup" ? "signup" : "signin");
+if (PREVIEW) $("previewNote").hidden = false;
+else loadFirebase().catch(() => showAlert("Couldn't load the sign-in service. Refresh the page to try again."));
+</script>
+<!-- CAPLYNK:BODY-END -->
+</body>
+</html>

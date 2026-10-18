@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Profile created at sign-up: name, email or phone, role (candidate | employer).
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+      // Each user reads and writes only their own assistant conversations
+      // and recruiter data (modules 1-4: candidates, roles, WhatsApp conversations).
+      match /{collection}/{docId} {
+        allow read, write: if request.auth != null && request.auth.uid == uid
+          && collection in ['chats', 'candidates', 'roles', 'conversations'];
+      }
+    }
+    // Phone-to-candidate index used by the WhatsApp webhook: server only.
+    match /waIndex/{phone} {
+      allow read, write: if false;
+    }
+  }
+}

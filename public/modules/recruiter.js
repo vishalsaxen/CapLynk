@@ -1,0 +1,583 @@
+// CapLynk recruiter workspace.
+// M1 CVs: browse first (text extracted in the browser), parse later (Claude via /api/profiles, or the offline heuristics).
+// M2 WhatsApp send: Business Cloud API via /api/whatsapp/send, or a wa.me click-to-chat link.
+// M3 Tracker: per-candidate conversation with status, next step, due date, and close/reopen.
+// M4 Roles: SFIA skill profiles, ranked matches, and a printable client summary card.
+// Storage: Firestore under users/{uid}/... when firebase-config.js is filled in, otherwise this browser's localStorage.
+(() => {
+  const S = window.CapSkills;
+  const $ = (id) => document.getElementById(id);
+  const h = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+  const now = () => new Date().toISOString();
+  const first = (name) => String(name || "").trim().split(/\s+/)[0] || "there";
+  const fmtTime = (iso) => iso ? new Date(iso).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+  const fmtDay = (d) => d ? new Date(d + "T00:00").toLocaleDateString([], { day: "numeric", month: "short" }) : "";
+  const today = () => new Date().toISOString().slice(0, 10);
+
+  const cfg = window.CAPLYNK_FIREBASE || {};
+  const LIVE = !!cfg.apiKey;
+  const LS_KEY = "caplynk.recruiter.v1", SET_KEY = "caplynk.recruiter.settings";
+  const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+
+  const settings = Object.assign({ waMode: LIVE ? "api" : "link", cc: "44", sender: "" }, lsGet(SET_KEY, {}));
+  const state = { candidates: [], roles: [], conversations: {}, tab: "cvs", candId: null, chatId: null, roleId: null, wf: "open", q: "" };
+  let fb = null; // { db, fs, user } in live mode
+
+  // ---------- storage ----------
+  const COLS = { candidates: "candidates", roles: "roles", conversations: "conversations" };
+  function persistLocal() {
+    if (LIVE) return;
+    lsSet(LS_KEY, { candidates: state.candidates, roles: state.roles, conversations: state.conversations });
+  }
+  async function save(col, obj) {
+    obj.updatedAt = now();
+    if (col === "conversations") state.conversations[obj.id] = obj;
+    else { const arr = state[col]; const i = arr.findIndex((x) => x.id === obj.id); if (i >= 0) arr[i] = obj; else arr.unshift(obj); }
+    if (!LIVE) return persistLocal();
+    try { await fb.fs.setDoc(fb.fs.doc(fb.db, "users", fb.user.uid, COLS[col], obj.id), JSON.parse(JSON.stringify(obj))); }
+    catch (e) { console.error(e); toast("Couldn't save to the cloud. Check your connection."); }
+  }
+  async function remove(col, id) {
+    if (col === "conversations") delete state.conversations[id];
+    else state[col] = state[col].filter((x) => x.id !== id);
+    if (!LIVE) return persistLocal();
+    await fb.fs.deleteDoc(fb.fs.doc(fb.db, "users", fb.user.uid, COLS[col], id)).catch(console.error);
+  }
+
+  async function api(path, body) {
+    if (!LIVE || !fb?.user) throw new Error("offline");
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + (await fb.user.getIdToken()) },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error((await res.text().catch(() => "")) || res.statusText);
+    return res.json();
+  }
+
+  let toastTimer;
+  function toast(msg) { const t = $("toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), 3800); }
+
+  // ---------- tabs ----------
+  function setTab(tab) {
+    state.tab = tab;
+    document.querySelectorAll("nav.tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+    ["cvs", "wa", "roles"].forEach((t) => ($("view-" + t).hidden = t !== tab));
+    render();
+  }
+  document.querySelectorAll("nav.tabs button").forEach((b) => (b.onclick = () => setTab(b.dataset.tab)));
+
+  function render() {
+    renderUnread();
+    if (state.tab === "cvs") renderCandidates();
+    if (state.tab === "wa") renderChats();
+    if (state.tab === "roles") renderRoles();
+  }
+
+  // =====================================================================
+  // M1: CVs. Browse first, parse later.
+  // =====================================================================
+  const loadScript = (src) => new Promise((ok, bad) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = bad; document.head.appendChild(s); });
+  const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+  const MAMMOTH = "https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js";
+
+  async function extractText(file) {
+    const ext = file.name.toLowerCase().split(".").pop();
+    if (ext === "txt" || ext === "md") return file.text();
+    if (ext === "pdf") {
+      if (!window.pdfjsLib) { await loadScript(PDFJS + "pdf.min.js"); window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.js"; }
+      const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+      let out = "";
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const c = await (await pdf.getPage(p)).getTextContent();
+        out += c.items.map((i) => i.str + (i.hasEOL ? "\n" : " ")).join("") + "\n";
+      }
+      return out;
+    }
+    if (ext === "docx") {
+      if (!window.mammoth) await loadScript(MAMMOTH);
+      return (await window.mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })).value;
+    }
+    throw new Error("Use PDF, DOCX or TXT (" + file.name + ")");
+  }
+
+  async function addFiles(files) {
+    let added = 0;
+    for (const f of files) {
+      try {
+        const text = (await extractText(f)).replace(/[ \t]+\n/g, "\n").trim();
+        if (!text) { toast(f.name + " has no readable text (scanned image?)"); continue; }
+        const c = { id: uid(), status: "new", fileName: f.name, cvText: text.slice(0, 60000), addedAt: now(), name: "", skills: [] };
+        await save("candidates", c); added++;
+        if (!state.candId) state.candId = c.id;
+      } catch (e) { toast(e.message || "Couldn't read " + f.name); }
+    }
+    if (added) toast(added + (added === 1 ? " CV added. Parse it when you're ready." : " CVs added. Parse them when you're ready."));
+    render();
+  }
+  $("cvFiles").onchange = (e) => { addFiles([...e.target.files]); e.target.value = ""; };
+  $("candSearch").oninput = (e) => { state.q = e.target.value.toLowerCase(); renderCandidates(); };
+
+  async function parseCandidate(c, quiet) {
+    let p, by = "heuristic";
+    try { p = (await api("/api/profiles", { action: "cv", text: c.cvText })).profile; by = "claude"; }
+    catch (e) { if (LIVE && !quiet) toast("Claude parse unavailable, used the built-in parser."); p = S.parseCvText(c.cvText); }
+    const valid = (p.skills || []).filter((s) => S.BY_CODE[s.code]).map((s) => ({ code: s.code, level: Math.max(1, Math.min(7, +s.level || 3)), evidence: s.evidence || "" }));
+    Object.assign(c, {
+      name: p.name || c.name || "", email: p.email || "", phone: p.phone || "", location: p.location || "",
+      linkedin: p.linkedin || "", headline: p.headline || "", yearsExperience: p.yearsExperience ?? null,
+      summary: p.summary || c.summary || "", skills: valid, status: "parsed", parsedAt: now(), parsedBy: by,
+    });
+    await save("candidates", c);
+  }
+
+  $("parseAllBtn").onclick = async () => {
+    const todo = state.candidates.filter((c) => c.status === "new");
+    if (!todo.length) return toast("No new CVs to parse.");
+    for (const c of todo) await parseCandidate(c, true);
+    toast("Parsed " + todo.length + (todo.length === 1 ? " CV." : " CVs."));
+    render();
+  };
+
+  function candLabel(c) { return c.name || c.fileName || "Unnamed candidate"; }
+  function duplicateOf(c) {
+    const d = (v) => String(v || "").replace(/\D/g, "").slice(-9);
+    return state.candidates.find((o) => o.id !== c.id && ((c.email && o.email && o.email.toLowerCase() === c.email.toLowerCase()) || (c.phone && o.phone && d(o.phone) === d(c.phone))));
+  }
+
+  function renderCandidates() {
+    const q = state.q;
+    const list = state.candidates.filter((c) => !q || [c.name, c.fileName, c.email, c.headline, ...(c.skills || []).map((s) => s.code + " " + (S.BY_CODE[s.code]?.name || ""))].join(" ").toLowerCase().includes(q));
+    $("candList").innerHTML = list.length ? list.map((c) => `
+      <li><button data-id="${c.id}" aria-current="${c.id === state.candId}">
+        <span class="li-top"><span>${h(candLabel(c))}</span>${c.status === "new" ? '<span class="chip amber">Not parsed</span>' : '<span class="chip green">Parsed</span>'}</span>
+        <span class="li-sub">${h(c.status === "new" ? c.fileName : [c.headline, c.location].filter(Boolean).join(" · ") || c.email || "")}</span>
+      </button></li>`).join("") : `<li class="muted" style="padding:14px">${state.candidates.length ? "No matches." : "No CVs yet."}</li>`;
+    $("candList").querySelectorAll("button").forEach((b) => (b.onclick = () => { state.candId = b.dataset.id; renderCandidates(); }));
+
+    const c = state.candidates.find((x) => x.id === state.candId);
+    const drop = `<div class="drop" id="drop"><strong>Drop CVs here</strong> or use <em>Browse CVs</em>. PDF, DOCX or TXT. They're stored unparsed until you choose to parse.</div>`;
+    if (!c) {
+      $("candDetail").innerHTML = drop + `<div class="empty"><h3>Start with the CVs</h3><p>Add CVs now and parse them later. Parsing pulls out the name, contact details and an SFIA skill profile you can edit.</p>
+        <button class="btn ghost" id="emptySamples" type="button">Try with sample CVs</button></div>`;
+      $("emptySamples").onclick = loadSamples;
+      return wireDrop();
+    }
+    const dup = duplicateOf(c);
+    const conv = state.conversations[c.id];
+    $("candDetail").innerHTML = drop + `
+      <div class="title-row">
+        <div><h1>${h(candLabel(c))}</h1><div class="sub">${h(c.fileName || "")}${c.parsedBy ? " · parsed " + (c.parsedBy === "claude" ? "by Claude" : "by built-in parser") + " " + fmtTime(c.parsedAt) : ""}</div></div>
+        <div class="row">
+          <button class="btn ${c.status === "new" ? "" : "ghost"}" id="parseBtn" type="button">${c.status === "new" ? "Parse CV" : "Parse again"}</button>
+          <button class="btn wa" id="waBtn" type="button" ${c.phone ? "" : "disabled title='Add a phone number first'"}>WhatsApp${conv ? (conv.status === "closed" ? " (closed)" : "") : ""}</button>
+          <button class="btn danger" id="delBtn" type="button">Delete</button>
+        </div>
+      </div>
+      ${c.status === "new" ? '<div class="warn">Not parsed yet. Parse to fill in contact details and skills, or type them in yourself.</div>' : ""}
+      ${dup ? `<div class="warn">Possible duplicate of <a href="#" id="dupLink">${h(candLabel(dup))}</a> (same email or phone).</div>` : ""}
+      <div class="card"><h3>Personal and contact details</h3>
+        <div class="grid">
+          ${field("name", "Full name", c.name)}${field("email", "Email", c.email, "email")}${field("phone", "Phone (WhatsApp)", c.phone, "tel")}
+          ${field("location", "Location", c.location)}${field("headline", "Current title", c.headline)}${field("yearsExperience", "Years of experience", c.yearsExperience ?? "", "number")}
+          ${field("linkedin", "LinkedIn", c.linkedin)}${field("notice", "Notice period", c.notice)}${field("salary", "Salary expectation", c.salary)}
+        </div>
+        <label class="f" style="margin-top:12px">Recruiter summary
+          <textarea data-f="summary" rows="3" placeholder="A few lines on this candidate, used on the client card.">${h(c.summary)}</textarea></label>
+      </div>
+      <div class="card"><h3>Skill profile (SFIA) <button class="btn ghost sm" id="addSkillBtn" type="button">Add skill</button></h3>
+        ${skillTable(c.skills, "cand")}
+      </div>
+      <div class="card"><h3>CV text</h3><details><summary class="muted">Show the extracted text</summary><pre class="cv">${h(c.cvText)}</pre></details></div>`;
+    wireDrop();
+    $("candDetail").querySelectorAll("[data-f]").forEach((el) => (el.onchange = () => {
+      c[el.dataset.f] = el.type === "number" ? (el.value === "" ? null : +el.value) : el.value.trim();
+      save("candidates", c); renderCandidates();
+    }));
+    wireSkillTable(c.skills, () => save("candidates", c), "cand");
+    $("addSkillBtn").onclick = () => { c.skills.push({ code: unusedCode(c.skills), level: 3, evidence: "" }); save("candidates", c); renderCandidates(); };
+    $("parseBtn").onclick = async () => { $("parseBtn").disabled = true; $("parseBtn").textContent = "Parsing…"; await parseCandidate(c); renderCandidates(); };
+    $("waBtn").onclick = () => openChat(c.id);
+    $("delBtn").onclick = async () => { if (!confirm("Delete " + candLabel(c) + " and their WhatsApp history?")) return; await remove("candidates", c.id); if (conv) await remove("conversations", c.id); state.candId = state.candidates[0]?.id || null; render(); };
+    if (dup) $("dupLink").onclick = (e) => { e.preventDefault(); state.candId = dup.id; renderCandidates(); };
+  }
+  function field(key, label, val, type = "text") { return `<label class="f">${label}<input data-f="${key}" type="${type}" value="${h(val ?? "")}"></label>`; }
+  function unusedCode(list) { const used = new Set(list.map((s) => s.code)); return (S.SFIA.find((s) => !used.has(s.code)) || S.SFIA[0]).code; }
+  function skillOptions(sel) {
+    let cat = "", out = "";
+    for (const s of S.SFIA) { if (s.category !== cat) { out += (cat ? "</optgroup>" : "") + `<optgroup label="${s.category}">`; cat = s.category; } out += `<option value="${s.code}" ${s.code === sel ? "selected" : ""}>${s.name} (${s.code})</option>`; }
+    return out + "</optgroup>";
+  }
+  function levelOptions(sel) { return S.LEVELS.slice(1).map((l, i) => `<option value="${i + 1}" ${+sel === i + 1 ? "selected" : ""}>${l}</option>`).join(""); }
+  function skillTable(list, kind) {
+    if (!list.length) return `<p class="muted" style="margin:0">No skills yet. Parse the ${kind === "cand" ? "CV" : "description"} or add them yourself.</p>`;
+    return `<table><thead><tr><th>Skill</th><th>${kind === "cand" ? "Level" : "Minimum level"}</th><th>${kind === "cand" ? "Evidence" : "Must have"}</th><th></th></tr></thead><tbody>
+      ${list.map((s, i) => `<tr data-i="${i}">
+        <td><select data-k="code">${skillOptions(s.code)}</select></td>
+        <td><select data-k="${kind === "cand" ? "level" : "minLevel"}">${levelOptions(kind === "cand" ? s.level : s.minLevel)}</select></td>
+        <td>${kind === "cand" ? `<input class="in" data-k="evidence" value="${h(s.evidence)}" style="width:100%">` : `<input type="checkbox" data-k="mustHave" ${s.mustHave ? "checked" : ""}>`}</td>
+        <td><button class="btn ghost sm" data-del type="button" aria-label="Remove">✕</button></td></tr>`).join("")}
+      </tbody></table>`;
+  }
+  function wireSkillTable(list, onSave, kind) {
+    const root = kind === "cand" ? $("candDetail") : $("roleDetail");
+    root.querySelectorAll("tr[data-i]").forEach((tr) => {
+      const s = list[+tr.dataset.i];
+      tr.querySelectorAll("[data-k]").forEach((el) => (el.onchange = () => {
+        const k = el.dataset.k;
+        s[k] = k === "mustHave" ? el.checked : (k === "level" || k === "minLevel") ? +el.value : el.value;
+        onSave(); if (kind === "role") renderRoles();
+      }));
+      tr.querySelector("[data-del]").onclick = () => { list.splice(+tr.dataset.i, 1); onSave(); render(); };
+    });
+  }
+  function wireDrop() {
+    const d = $("drop"); if (!d) return;
+    d.ondragover = (e) => { e.preventDefault(); d.classList.add("over"); };
+    d.ondragleave = () => d.classList.remove("over");
+    d.ondrop = (e) => { e.preventDefault(); d.classList.remove("over"); addFiles([...e.dataTransfer.files]); };
+  }
+
+  // =====================================================================
+  // M2 + M3: WhatsApp send and conversation tracker
+  // =====================================================================
+  const TEMPLATES = [
+    ["intro", "Introduce a role", "Hi {first}, this is {sender}. I came across your profile and have {a_role} opportunity that looks like a strong match for your skills. Are you open to a quick chat this week?"],
+    ["interest", "Check interest and availability", "Hi {first}, are you currently open to new roles? If so, what notice period and salary range should I note for {role}?"],
+    ["interview", "Invite to interview", "Hi {first}, good news: the client would like to interview you for {role}. Which of these times works for you?\n1. \n2. "],
+    ["followup", "Follow up", "Hi {first}, just following up on my last message about {role}. Let me know either way when you have a moment."],
+    ["close", "Close politely", "Thanks for your time, {first}. I'll close this conversation for now and will be in touch if something else fits."],
+  ];
+  const CLOSE_REASONS = ["Placed", "Not interested", "No response", "Not a fit", "Hired elsewhere", "Other"];
+
+  function ensureConv(candId) {
+    let conv = state.conversations[candId];
+    if (!conv) { conv = { id: candId, candidateId: candId, status: "open", messages: [], nextStep: "", nextStepDue: "", roleId: "", createdAt: now() }; state.conversations[candId] = conv; }
+    return conv;
+  }
+  function openChat(candId) { ensureConv(candId); state.chatId = candId; state.wf = state.conversations[candId].status === "closed" ? "closed" : "open"; setTab("wa"); }
+
+  function convState(conv) {
+    if (conv.status === "closed") return ["Closed", "magenta"];
+    const last = conv.messages[conv.messages.length - 1];
+    if (!last) return ["New", ""];
+    return last.dir === "in" ? ["Replied", "green"] : ["Awaiting reply", "amber"];
+  }
+  function renderUnread() {
+    const n = Object.values(state.conversations).filter((c) => c.unread).length;
+    $("unreadCount").hidden = !n; $("unreadCount").textContent = n;
+  }
+
+  document.querySelectorAll("[data-wf]").forEach((b) => (b.onclick = () => { state.wf = b.dataset.wf; renderChats(); }));
+
+  function renderChats() {
+    document.querySelectorAll("[data-wf]").forEach((b) => b.classList.toggle("ghost", b.dataset.wf !== state.wf));
+    const t = today();
+    const convs = Object.values(state.conversations)
+      .filter((c) => state.candidates.some((x) => x.id === c.id))
+      .filter((c) => state.wf === "all" || (state.wf === "closed" ? c.status === "closed" : c.status !== "closed") && (state.wf !== "next" || (c.nextStepDue && c.nextStepDue <= t)))
+      .sort((a, b) => (b.lastAt || b.createdAt || "").localeCompare(a.lastAt || a.createdAt || ""));
+    $("chatList").innerHTML = convs.length ? convs.map((conv) => {
+      const c = state.candidates.find((x) => x.id === conv.id);
+      const [label, tone] = convState(conv);
+      const last = conv.messages[conv.messages.length - 1];
+      const due = conv.nextStepDue ? ` · <span class="${conv.nextStepDue <= t && conv.status !== "closed" ? "overdue" : ""}">due ${fmtDay(conv.nextStepDue)}</span>` : "";
+      return `<li><button data-id="${conv.id}" aria-current="${conv.id === state.chatId}">
+        <span class="li-top"><span>${conv.unread ? '<span class="dot"></span> ' : ""}${h(candLabel(c))}</span><span class="chip ${tone}">${label}</span></span>
+        <span class="li-sub">${conv.nextStep ? "Next: " + h(conv.nextStep) + due : h(last ? (last.dir === "in" ? "" : "You: ") + last.text : "No messages yet")}</span>
+      </button></li>`;
+    }).join("") : `<li class="muted" style="padding:14px">${state.wf === "closed" ? "No closed chats." : state.wf === "next" ? "No next steps due today or earlier." : "No conversations. Use the WhatsApp button on a candidate to start one."}</li>`;
+    $("chatList").querySelectorAll("button").forEach((b) => (b.onclick = () => { state.chatId = b.dataset.id; renderChats(); }));
+
+    const conv = state.conversations[state.chatId];
+    const c = conv && state.candidates.find((x) => x.id === conv.id);
+    if (!conv || !c) { $("chatDetail").innerHTML = `<div class="empty"><h3>WhatsApp tracker</h3><p>Every message you send to a candidate lands here with its replies, a next step and a due date. Close a chat when it's no longer needed; closed chats can't be messaged until you reopen them.</p></div>`; return; }
+    if (conv.unread) { conv.unread = false; save("conversations", conv); renderUnread(); }
+
+    const phone = S.toE164Digits(c.phone, settings.cc);
+    const closed = conv.status === "closed";
+    const [label, tone] = convState(conv);
+    const role = state.roles.find((r) => r.id === conv.roleId);
+    $("chatDetail").innerHTML = `
+      <div class="chat-head">
+        <div class="title-row" style="margin:0">
+          <div><h1 style="font-size:21px">${h(candLabel(c))} <span class="chip ${tone}" style="vertical-align:middle">${label}</span></h1>
+            <div class="sub">${phone ? "+" + h(phone) : "No phone number"} · ${settings.waMode === "api" ? "Business API" : "WhatsApp link"}</div></div>
+          <div class="row">
+            <button class="btn ghost sm" id="viewCandBtn" type="button">View CV</button>
+            ${closed ? `<button class="btn sm" id="reopenBtn" type="button">Reopen chat</button>` :
+              `<select class="in" id="closeReason" aria-label="Close reason">${CLOSE_REASONS.map((r) => `<option>${r}</option>`).join("")}</select><button class="btn danger sm" id="closeChatBtn" type="button">Close chat</button>`}
+          </div>
+        </div>
+        <div class="grid" style="grid-template-columns: minmax(180px,2fr) minmax(140px,1fr) minmax(160px,1fr)">
+          <label class="f">Next step<input id="nextStep" value="${h(conv.nextStep)}" placeholder="e.g. Call to confirm availability" ${closed ? "disabled" : ""}></label>
+          <label class="f">Due<input id="nextDue" type="date" value="${h(conv.nextStepDue)}" ${closed ? "disabled" : ""}></label>
+          <label class="f">About role<select id="convRole" ${closed ? "disabled" : ""}><option value="">No role</option>${state.roles.map((r) => `<option value="${r.id}" ${r.id === conv.roleId ? "selected" : ""}>${h(r.title)}${r.client ? " · " + h(r.client) : ""}</option>`).join("")}</select></label>
+        </div>
+      </div>
+      <div class="msgs" id="msgs">
+        <div class="sys">Conversation started ${fmtTime(conv.createdAt)}</div>
+        ${conv.messages.map((m) => m.dir === "sys" ? `<div class="sys">${h(m.text)} · ${fmtTime(m.at)}</div>` : `
+          <div class="msg ${m.dir}">${h(m.text)}<div class="meta">${fmtTime(m.at)}${m.dir === "out" ? " · " + h(m.status || (m.via === "link" ? "opened in WhatsApp" : "sent")) : m.via === "manual" ? " · logged" : ""}</div></div>`).join("")}
+      </div>
+      <div class="composer">
+        ${closed ? `<div class="closed-note"><span>Chat closed${conv.closeReason ? " (" + h(conv.closeReason) + ")" : ""} on ${fmtTime(conv.closedAt)}. Messaging is disabled.</span></div>` : `
+        <div class="row">
+          <select class="in" id="tpl" aria-label="Message template"><option value="">Write your own…</option>${TEMPLATES.map(([k, n]) => `<option value="${k}">${n}</option>`).join("")}</select>
+          <span class="muted" style="font-size:12.5px">${settings.waMode === "api" ? "Outside 24 hours of their last reply, WhatsApp only allows approved templates; CapLynk sends your text through the outreach template." : "Opens WhatsApp with the message ready; press send there."}</span>
+        </div>
+        <textarea id="msgText" placeholder="Message to ${h(first(c.name))}"></textarea>
+        <div class="row" style="justify-content:space-between">
+          <button class="btn ghost sm" id="logReplyBtn" type="button" title="Paste what the candidate replied">Log their reply</button>
+          <button class="btn wa" id="sendBtn" type="button" ${phone ? "" : "disabled"}>Send on WhatsApp</button>
+        </div>`}
+      </div>`;
+    const msgs = $("msgs"); msgs.scrollTop = msgs.scrollHeight;
+    $("viewCandBtn").onclick = () => { state.candId = c.id; setTab("cvs"); };
+    if (closed) {
+      $("reopenBtn").onclick = () => { conv.status = "open"; conv.messages.push({ dir: "sys", text: "Chat reopened", at: now() }); save("conversations", conv); state.wf = "open"; renderChats(); };
+      return;
+    }
+    $("closeChatBtn").onclick = () => {
+      conv.status = "closed"; conv.closedAt = now(); conv.closeReason = $("closeReason").value; conv.nextStepDue = "";
+      conv.messages.push({ dir: "sys", text: "Chat closed: " + conv.closeReason, at: now() });
+      save("conversations", conv); state.wf = "closed"; renderChats(); toast("Chat closed. Reopen it any time from Closed.");
+    };
+    $("nextStep").onchange = (e) => { conv.nextStep = e.target.value.trim(); save("conversations", conv); renderChats(); };
+    $("nextDue").onchange = (e) => { conv.nextStepDue = e.target.value; save("conversations", conv); renderChats(); };
+    $("convRole").onchange = (e) => { conv.roleId = e.target.value; save("conversations", conv); };
+    $("tpl").onchange = (e) => {
+      const t = TEMPLATES.find(([k]) => k === e.target.value); if (!t) return;
+      $("msgText").value = t[2].replace(/\{first\}/g, first(c.name)).replace(/\{sender\}/g, settings.sender || "the CapLynk team at Gaplyn Services")
+        .replace(/\{a_role\}/g, role ? (/^[aeiou]/i.test(role.title) ? "an " : "a ") + role.title : "a new")
+        .replace(/\{role\}/g, role ? role.title : "the role"); $("msgText").focus();
+    };
+    $("logReplyBtn").onclick = () => {
+      const text = $("msgText").value.trim(); if (!text) return toast("Paste the candidate's reply in the box first.");
+      conv.messages.push({ id: uid(), dir: "in", text, at: now(), via: "manual" }); conv.lastAt = now();
+      save("conversations", conv); renderChats();
+    };
+    $("sendBtn").onclick = () => sendWhatsApp(conv, c, phone);
+  }
+
+  async function sendWhatsApp(conv, c, phone) {
+    const text = $("msgText").value.trim();
+    if (!text) return toast("Write a message first.");
+    if (conv.status === "closed") return toast("This chat is closed. Reopen it to send.");
+    const btn = $("sendBtn"); btn.disabled = true;
+    const lastIn = [...conv.messages].reverse().find((m) => m.dir === "in");
+    const inWindow = lastIn && Date.now() - new Date(lastIn.at).getTime() < 24 * 3600e3;
+    if (settings.waMode === "api") {
+      try {
+        const r = await api("/api/whatsapp/send", { candidateId: c.id, to: phone, text, useTemplate: !inWindow, candidateName: c.name || "" });
+        conv.messages.push({ id: r.messageId || uid(), dir: "out", text, at: now(), via: "api", status: "sent" }); conv.lastAt = now();
+        state.conversations[conv.id] = conv; // the server stores the message; the live listener refreshes it
+        renderChats(); return toast("Sent on WhatsApp.");
+      } catch (e) {
+        toast("Business API unavailable (" + (e.message || "error").slice(0, 80) + "). Opening WhatsApp instead.");
+      }
+    }
+    window.open("https://wa.me/" + phone + "?text=" + encodeURIComponent(text), "_blank", "noopener");
+    conv.messages.push({ id: uid(), dir: "out", text, at: now(), via: "link", status: "opened in WhatsApp" }); conv.lastAt = now();
+    await save("conversations", conv); renderChats();
+  }
+
+  // =====================================================================
+  // M4: role skill profiles, matching, and the client summary card
+  // =====================================================================
+  $("newRoleBtn").onclick = async () => {
+    const r = { id: uid(), title: "New role", client: "", location: "", description: "", skills: [], shortlist: [], summaries: {}, createdAt: now() };
+    await save("roles", r); state.roleId = r.id; renderRoles(); setTimeout(() => $("roleDetail").querySelector("[data-r=title]")?.select(), 0);
+  };
+
+  function renderRoles() {
+    $("roleList").innerHTML = state.roles.length ? state.roles.map((r) => `
+      <li><button data-id="${r.id}" aria-current="${r.id === state.roleId}">
+        <span class="li-top"><span>${h(r.title)}</span>${r.shortlist?.length ? `<span class="chip green">${r.shortlist.length} shortlisted</span>` : ""}</span>
+        <span class="li-sub">${h([r.client, r.location].filter(Boolean).join(" · ") || (r.skills.length + " skills"))}</span>
+      </button></li>`).join("") : `<li class="muted" style="padding:14px">No roles yet.</li>`;
+    $("roleList").querySelectorAll("button").forEach((b) => (b.onclick = () => { state.roleId = b.dataset.id; renderRoles(); }));
+
+    const r = state.roles.find((x) => x.id === state.roleId);
+    if (!r) { $("roleDetail").innerHTML = `<div class="empty"><h3>Match candidates to a role</h3><p>Create a role, paste the job description, and CapLynk builds its SFIA skill profile, ranks your parsed candidates, and lays out a summary card for the client.</p><button class="btn" id="emptyRole" type="button">New role</button></div>`; $("emptyRole").onclick = () => $("newRoleBtn").click(); return; }
+    r.shortlist ||= []; r.summaries ||= {};
+    const parsed = state.candidates.filter((c) => c.status === "parsed" || (c.skills || []).length);
+    const ranked = parsed.map((c) => ({ c, m: S.match(c, r) })).sort((a, b) => b.m.score - a.m.score);
+    $("roleDetail").innerHTML = `
+      <div class="title-row"><div><h1>${h(r.title)}</h1><div class="sub">${h([r.client, r.location].filter(Boolean).join(" · "))}</div></div>
+        <div class="row"><button class="btn" id="presentBtn" type="button" ${r.shortlist.length ? "" : "disabled"}>Present ${r.shortlist.length || ""} to client</button><button class="btn danger" id="delRoleBtn" type="button">Delete role</button></div></div>
+      <div class="card"><h3>Role</h3>
+        <div class="grid">
+          <label class="f">Job title<input data-r="title" value="${h(r.title)}"></label>
+          <label class="f">Client<input data-r="client" value="${h(r.client)}"></label>
+          <label class="f">Location<input data-r="location" value="${h(r.location)}"></label>
+        </div>
+        <label class="f" style="margin-top:12px">Job description<textarea data-r="description" rows="6" placeholder="Paste the client's job description">${h(r.description)}</textarea></label>
+        <div class="row" style="margin-top:10px"><button class="btn ghost sm" id="extractBtn" type="button">Build skill profile from description</button></div>
+      </div>
+      <div class="card"><h3>Job skill profile (SFIA) <button class="btn ghost sm" id="addReqBtn" type="button">Add skill</button></h3>${skillTable(r.skills, "role")}</div>
+      <div class="card"><h3>Matching candidates <span class="muted" style="font:500 13px Figtree">${parsed.length} parsed candidates ranked</span></h3>
+        ${!r.skills.length ? '<p class="muted" style="margin:0">Add required skills to rank candidates.</p>' : !ranked.length ? '<p class="muted" style="margin:0">Parse some CVs first.</p>' : ranked.map(({ c, m }) => `
+          <div class="match">
+            <div class="score" style="--p:${m.score}"><span>${m.score}</span></div>
+            <div><strong>${h(candLabel(c))}</strong> <span class="muted">${h([c.headline, c.location].filter(Boolean).join(" · "))}</span>
+              <div class="muted" style="font-size:13px">Meets ${m.met} of ${m.rows.length} skills at the required level${m.missingMust.length ? ` · <span style="color:var(--magenta)">missing must-have: ${m.missingMust.map((x) => x.code).join(", ")}</span>` : ""}</div>
+              <div class="bars">${m.rows.map((x) => `<span class="code ${x.met ? "ok" : "gap"}" title="${h(x.name)}: needs ${x.need}, has ${x.level || "none"}">${x.code} ${x.level || "–"}/${x.need}</span>`).join("")}</div></div>
+            <div class="row"><button class="btn wa sm" data-wa="${c.id}" type="button" ${c.phone ? "" : "disabled"}>WhatsApp</button>
+              <label class="row" style="font-size:13px;font-weight:600"><input type="checkbox" data-sl="${c.id}" ${r.shortlist.includes(c.id) ? "checked" : ""}> Shortlist</label></div>
+          </div>`).join("")}
+      </div>`;
+    $("roleDetail").querySelectorAll("[data-r]").forEach((el) => (el.onchange = () => { r[el.dataset.r] = el.value.trim(); save("roles", r); renderRoles(); }));
+    wireSkillTable(r.skills, () => save("roles", r), "role");
+    $("addReqBtn").onclick = () => { r.skills.push({ code: unusedCode(r.skills), minLevel: 3, mustHave: false }); save("roles", r); renderRoles(); };
+    $("extractBtn").onclick = async () => {
+      const desc = $("roleDetail").querySelector("[data-r=description]").value.trim(); r.description = desc;
+      if (!desc) return toast("Paste the job description first.");
+      let skills;
+      try { skills = (await api("/api/profiles", { action: "job", text: desc })).profile.skills; }
+      catch { skills = S.parseJobText(desc); }
+      r.skills = skills.filter((s) => S.BY_CODE[s.code]).map((s) => ({ code: s.code, minLevel: Math.max(1, Math.min(7, +s.minLevel || 3)), mustHave: !!s.mustHave }));
+      await save("roles", r); renderRoles(); toast(r.skills.length ? "Skill profile built. Adjust levels and must-haves as needed." : "No SFIA skills recognised. Add them by hand.");
+    };
+    $("roleDetail").querySelectorAll("[data-sl]").forEach((el) => (el.onchange = () => {
+      const id = el.dataset.sl; r.shortlist = el.checked ? [...new Set([...r.shortlist, id])] : r.shortlist.filter((x) => x !== id);
+      save("roles", r); renderRoles();
+    }));
+    $("roleDetail").querySelectorAll("[data-wa]").forEach((b) => (b.onclick = () => { const conv = ensureConv(b.dataset.wa); if (!conv.roleId) conv.roleId = r.id; openChat(b.dataset.wa); }));
+    $("presentBtn").onclick = () => openClientCard(r);
+    $("delRoleBtn").onclick = async () => { if (!confirm("Delete the role " + r.title + "?")) return; await remove("roles", r.id); state.roleId = state.roles[0]?.id || null; renderRoles(); };
+  }
+
+  function templateSummary(c, r, m) {
+    const strong = m.rows.filter((x) => x.met).sort((a, b) => b.level - a.level).slice(0, 3).map((x) => x.name.toLowerCase());
+    const gaps = m.rows.filter((x) => !x.met).map((x) => x.name.toLowerCase());
+    const yrs = c.yearsExperience ? ` with ${c.yearsExperience} years' experience` : "";
+    return `${first(c.name)} is ${/^[aeiou]/i.test(c.headline || "") ? "an" : "a"} ${c.headline || "candidate"}${yrs}${c.location ? ", based in " + c.location : ""}. ` +
+      `Against the ${r.title} profile they meet ${m.met} of ${m.rows.length} required skills at or above the SFIA level asked for` +
+      (strong.length ? `, with particular strength in ${strong.join(", ").replace(/, ([^,]*)$/, " and $1")}.` : ".") +
+      (gaps.length ? ` Areas to probe at interview: ${gaps.join(", ")}.` : "");
+  }
+
+  let cardRole = null;
+  async function openClientCard(r) {
+    cardRole = r;
+    const items = r.shortlist.map((id) => state.candidates.find((c) => c.id === id)).filter(Boolean);
+    for (const c of items) {
+      if (r.summaries[c.id]) continue;
+      const m = S.match(c, r);
+      try { r.summaries[c.id] = (await api("/api/profiles", { action: "summary", candidate: slim(c), role: { title: r.title, client: r.client, skills: r.skills }, match: m })).summary; }
+      catch { r.summaries[c.id] = c.summary ? c.summary : templateSummary(c, r, m); }
+    }
+    await save("roles", r);
+    drawCards(); $("cardDlg").showModal();
+  }
+  const slim = (c) => ({ name: c.name, headline: c.headline, location: c.location, yearsExperience: c.yearsExperience, skills: c.skills, summary: c.summary, cvText: (c.cvText || "").slice(0, 12000) });
+
+  function drawCards() {
+    const r = cardRole, hide = $("hideContact").checked;
+    const items = r.shortlist.map((id) => state.candidates.find((c) => c.id === id)).filter(Boolean);
+    const date = new Date().toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" });
+    $("cardBody").innerHTML = items.map((c) => {
+      const m = S.match(c, r);
+      const extras = Object.fromEntries((c.skills || []).map((s) => [s.code, s]));
+      r.skills.forEach((s) => delete extras[s.code]);
+      const other = Object.values(extras).slice(0, 6).map((s) => `${S.BY_CODE[s.code]?.name || s.code} (L${s.level})`).join(", ");
+      return `<article class="ccard" data-id="${c.id}">
+        <div class="cc-top"><div class="cc-brand"><span class="tile" style="width:24px;height:24px;font-size:14px;border-radius:6px">G</span>CapLynk <span style="font:500 12px Figtree;color:#566070">by Gaplyn Services</span></div>
+          <div class="cc-for">${h(r.title)}${r.client ? " · for " + h(r.client) : ""}<br>${date}</div></div>
+        <div class="cc-head"><div><h2>${h(c.name || "Candidate")}</h2>
+          <div class="cc-meta">${h([c.headline, c.location, c.yearsExperience ? c.yearsExperience + " years' experience" : "", c.notice ? "Notice: " + c.notice : ""].filter(Boolean).join(" · "))}</div>
+          ${hide ? "" : `<div class="cc-meta">${h([c.email, c.phone, c.linkedin].filter(Boolean).join(" · "))}</div>`}</div>
+          <div class="cc-score">${m.score}%<small>skills match</small></div></div>
+        <p class="cc-summary" contenteditable="true" spellcheck="true">${h(r.summaries[c.id] || "")}</p>
+        <table><thead><tr><th>Skill (SFIA)</th><th>Required</th><th>Candidate</th><th></th></tr></thead><tbody>
+          ${m.rows.map((x) => `<tr><td>${h(x.name)} <span style="color:#566070;font-size:12px">${x.code}${x.mustHave ? " · essential" : ""}</span></td><td>Level ${x.need}</td><td>${x.level ? "Level " + x.level : "Not evidenced"}</td><td class="${x.met ? "yes" : "no"}">${x.met ? "✓ Meets" : "Gap"}</td></tr>`).join("")}
+        </tbody></table>
+        ${other ? `<div class="cc-foot"><strong>Also brings:</strong> ${h(other)}</div>` : ""}
+        <div class="cc-foot">Skill levels follow SFIA (1 Follow to 7 Set strategy). Presented by ${h(settings.sender || "Gaplyn Services")}.</div>
+      </article>`;
+    }).join("") || '<p class="muted">Shortlist candidates on the role first.</p>';
+    $("cardBody").querySelectorAll(".cc-summary").forEach((p) => (p.onblur = () => { r.summaries[p.closest(".ccard").dataset.id] = p.innerText.trim(); save("roles", r); }));
+    const mail = cardText();
+    $("emailCardBtn").href = "mailto:?subject=" + encodeURIComponent("Candidates for " + r.title) + "&body=" + encodeURIComponent(mail.slice(0, 1800));
+  }
+  function cardText() {
+    const r = cardRole, hide = $("hideContact").checked;
+    return `Candidates for ${r.title}${r.client ? " (" + r.client + ")" : ""}\n\n` + r.shortlist.map((id) => state.candidates.find((c) => c.id === id)).filter(Boolean).map((c) => {
+      const m = S.match(c, r);
+      return `${c.name} · ${m.score}% skills match\n${[c.headline, c.location, c.yearsExperience ? c.yearsExperience + " years" : ""].filter(Boolean).join(" · ")}` +
+        (hide ? "" : `\n${[c.email, c.phone].filter(Boolean).join(" · ")}`) + `\n${r.summaries[c.id] || ""}\n` +
+        m.rows.map((x) => `- ${x.name}: needs L${x.need}, has ${x.level ? "L" + x.level : "none"}${x.met ? " ✓" : ""}`).join("\n");
+    }).join("\n\n");
+  }
+  $("hideContact").onchange = drawCards;
+  $("closeCardBtn").onclick = () => { $("cardDlg").close(); renderRoles(); };
+  $("printCardBtn").onclick = () => window.print();
+  $("copyCardBtn").onclick = async () => { try { await navigator.clipboard.writeText(cardText()); toast("Copied. Paste it into an email to the client."); } catch { toast("Copy blocked by the browser."); } };
+
+  // ---------- settings ----------
+  $("settingsBtn").onclick = () => {
+    $("setWaMode").value = settings.waMode; $("setCc").value = settings.cc; $("setSender").value = settings.sender;
+    $("storageNote").textContent = LIVE ? "Data is saved to your Firestore account and syncs across devices." : "Preview mode: data is saved only in this browser. Add your Firebase config to save it to your account.";
+    $("settingsDlg").showModal();
+  };
+  $("setWaMode").onchange = (e) => { settings.waMode = e.target.value; lsSet(SET_KEY, settings); if (e.target.value === "api" && !LIVE) toast("The Business API needs CapLynk deployed to Firebase. Until then sends fall back to the WhatsApp link."); };
+  $("setCc").onchange = (e) => { settings.cc = e.target.value.replace(/\D/g, ""); lsSet(SET_KEY, settings); };
+  $("setSender").onchange = (e) => { settings.sender = e.target.value.trim(); lsSet(SET_KEY, settings); };
+  $("closeSettingsBtn").onclick = () => { $("settingsDlg").close(); render(); };
+  $("exportBtn").onclick = () => {
+    const blob = new Blob([JSON.stringify({ candidates: state.candidates, roles: state.roles, conversations: state.conversations }, null, 2)], { type: "application/json" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "caplynk-export.json"; a.click();
+  };
+  $("clearBtn").onclick = async () => {
+    if (!confirm("Delete every candidate, role and conversation?")) return;
+    for (const c of [...state.candidates]) await remove("candidates", c.id);
+    for (const r of [...state.roles]) await remove("roles", r.id);
+    for (const id of Object.keys(state.conversations)) await remove("conversations", id);
+    state.candId = state.chatId = state.roleId = null; $("settingsDlg").close(); render();
+  };
+  async function loadSamples() {
+    const S2 = window.CapSamples;
+    for (const cv of S2.cvs) { const c = { id: uid(), status: "new", fileName: cv.fileName, cvText: cv.text, addedAt: now(), name: "", skills: [] }; await save("candidates", c); }
+    const r = { id: uid(), ...S2.role, skills: [], shortlist: [], summaries: {}, createdAt: now() };
+    r.skills = S.parseJobText(r.description); await save("roles", r);
+    state.candId = state.candidates[0].id; state.roleId = r.id;
+    if ($("settingsDlg").open) $("settingsDlg").close();
+    toast("Added 3 sample CVs (unparsed) and a sample role."); setTab("cvs");
+  }
+  $("loadSamplesBtn").onclick = loadSamples;
+
+  // ---------- boot ----------
+  async function boot() {
+    if (!LIVE) {
+      const d = lsGet(LS_KEY, {});
+      Object.assign(state, { candidates: d.candidates || [], roles: d.roles || [], conversations: d.conversations || {} });
+      state.candId = state.candidates[0]?.id || null; state.roleId = state.roles[0]?.id || null;
+      return render();
+    }
+    $("modeBadge").textContent = "Live"; $("modeBadge").classList.add("live");
+    const sdk = window.CAPLYNK_FIREBASE_SDK;
+    const { initializeApp } = await import(sdk + "/firebase-app.js");
+    const auth = await import(sdk + "/firebase-auth.js");
+    const fs = await import(sdk + "/firebase-firestore.js");
+    const app = initializeApp(cfg); const db = fs.getFirestore(app);
+    auth.onAuthStateChanged(auth.getAuth(app), async (user) => {
+      if (!user) return location.replace("../index.html");
+      fb = { db, fs, user };
+      const col = (n) => fs.collection(db, "users", user.uid, n);
+      const [cs, rs] = await Promise.all([fs.getDocs(fs.query(col("candidates"), fs.orderBy("addedAt", "desc"))), fs.getDocs(col("roles"))]);
+      state.candidates = cs.docs.map((d) => d.data()); state.roles = rs.docs.map((d) => d.data());
+      state.candId = state.candidates[0]?.id || null; state.roleId = state.roles[0]?.id || null;
+      // Conversations are live: replies written by the WhatsApp webhook show up without a refresh.
+      fs.onSnapshot(col("conversations"), (snap) => {
+        snap.docChanges().forEach((ch) => { if (ch.type === "removed") delete state.conversations[ch.doc.id]; else state.conversations[ch.doc.id] = ch.doc.data(); });
+        const typing = document.activeElement && ["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement.tagName);
+        if (state.tab === "wa" && !typing) renderChats(); else renderUnread();
+      });
+      render();
+    });
+  }
+  boot();
+})();

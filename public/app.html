@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>CapLynk</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;700&family=Figtree:wght@400;600;700&display=swap">
+<style>
+:root { --green: #1FB33A; --green-hover: #16892C; --ink: #101827; --bg: #FFFFFF; --text: #101827; --muted: #566070; --line: #DCE3DD; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0B111C; --text: #EEF2F6; --muted: #9AA6B6; --line: #253041; color-scheme: dark; } }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 "Figtree", system-ui, sans-serif; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px max(16px, 4vw); border-bottom: 1px solid var(--line); }
+.logo { display: flex; align-items: center; gap: 10px; font: 700 20px "Outfit", sans-serif; }
+.tile { width: 32px; height: 32px; border-radius: 8px; background: var(--green); color: #fff; display: grid; place-items: center; font: 700 19px "Outfit", sans-serif; }
+main { max-width: 760px; margin: 0 auto; padding: 48px max(16px, 4vw); }
+h1 { font: 700 34px/1.1 "Outfit", sans-serif; margin: 0 0 8px; }
+p { color: var(--muted); margin: 0 0 24px; }
+button, a.btn { border: 0; border-radius: 10px; padding: 10px 16px; font: 700 15px "Figtree", sans-serif; cursor: pointer; background: var(--green); color: var(--ink); text-decoration: none; display: inline-block; }
+button.ghost { background: none; border: 1.5px solid var(--line); color: var(--text); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"><span class="tile">G</span>CapLynk</div>
+  <button class="ghost" id="signOut" type="button">Sign out</button>
+</header>
+<main>
+  <h1 id="hello">Loading…</h1>
+  <p id="sub">Your CapLynk home. Matching, profiles and roles will live here.</p>
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    <a class="btn" href="modules/recruiter.html">Open recruiter workspace</a>
+    <a class="btn" href="assistant.html" style="background:none;border:1.5px solid var(--line);color:var(--text)">CapLynk Assistant</a>
+  </div>
+</main>
+<script src="firebase-config.js"></script>
+<script type="module">
+// Gate: anyone not signed in goes back to the sign-in page.
+const cfg = window.CAPLYNK_FIREBASE, sdk = window.CAPLYNK_FIREBASE_SDK;
+if (!cfg.apiKey) {
+  document.getElementById("hello").textContent = "Welcome to CapLynk";
+  document.getElementById("sub").textContent = "Preview mode: add your Firebase config to require sign-in here.";
+} else {
+  const { initializeApp } = await import(sdk + "/firebase-app.js");
+  const auth = await import(sdk + "/firebase-auth.js");
+  const { getFirestore, doc, getDoc } = await import(sdk + "/firebase-firestore.js");
+  const app = initializeApp(cfg); const a = auth.getAuth(app);
+  auth.onAuthStateChanged(a, async (u) => {
+    if (!u) return location.replace("index.html");
+    const snap = await getDoc(doc(getFirestore(app), "users", u.uid)).catch(() => null);
+    const p = snap?.data() || {};
+    document.getElementById("hello").textContent = "Welcome, " + ((p.name || u.displayName || u.email).split(" ")[0]);
+    document.getElementById("sub").textContent = p.role === "employer"
+      ? "You're set up as an employer. Next: post a role and its required skills."
+      : "You're set up as a candidate. Next: build your skills profile.";
+  });
+  document.getElementById("signOut").onclick = () => auth.signOut(a);
+}
+</script>
+</body>
+</html>
