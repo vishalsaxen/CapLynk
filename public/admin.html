@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>CapLynk Super Admin</title>
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;700&family=Figtree:wght@400;500;600;700&display=swap">
+<style>
+/* Super Admin workspace: every candidate CV, parsing, WhatsApp send + tracker with .txt logs, roles, matching and client cards. */
+:root {
+  --green: #1FB33A; --green-hover: #16892C; --green-soft: #E3F6E6; --magenta: #C026D3; --magenta-soft: #FBE8FD;
+  --ink: #101827; --bg: #F6F8F6; --panel: #FFFFFF; --text: #101827; --muted: #566070; --line: #DCE3DD;
+  --amber: #A16207; --amber-soft: #FDF3D7; --bubble-in: #FFFFFF; --bubble-out: #DDF6E0; --chat-bg: #EEF2EE;
+  --radius: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0B111C; --panel: #111a28; --text: #EEF2F6; --muted: #9AA6B6; --line: #253041;
+    --green-soft: #12301a; --magenta-soft: #3a1440; --amber: #E2B04A; --amber-soft: #3a2e12;
+    --bubble-in: #1a2536; --bubble-out: #16402a; --chat-bg: #0d1520; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0B111C; --panel: #111a28; --text: #EEF2F6; --muted: #9AA6B6; --line: #253041;
+  --green-soft: #12301a; --magenta-soft: #3a1440; --amber: #E2B04A; --amber-soft: #3a2e12;
+  --bubble-in: #1a2536; --bubble-out: #16402a; --chat-bg: #0d1520; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14.5px/1.5 "Figtree", system-ui, sans-serif; display: flex; flex-direction: column; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+header.top { display: flex; align-items: center; gap: 18px; padding: 10px max(16px, 3vw); background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.logo { display: flex; align-items: center; gap: 10px; font: 700 19px "Outfit", sans-serif; color: inherit; text-decoration: none; }
+.tile { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, #1FB33A, #8BE04E); color: #fff; display: grid; place-items: center; font: 700 18px "Outfit", sans-serif; }
+nav.tabs { display: flex; gap: 4px; flex: 1; overflow-x: auto; }
+nav.tabs button { border: 0; background: none; padding: 8px 12px; border-radius: 9px; cursor: pointer; font-weight: 600; color: var(--muted); white-space: nowrap; }
+nav.tabs button[aria-selected="true"] { background: var(--green-soft); color: var(--text); }
+nav.tabs .count { font-size: 11px; background: var(--magenta); color: #fff; border-radius: 99px; padding: 1px 6px; margin-left: 4px; }
+.mode { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 99px; background: var(--amber-soft); color: var(--amber); }
+.mode.live { background: var(--green-soft); color: var(--green-hover); }
+
+.btn { border: 0; border-radius: 10px; padding: 8px 14px; font-weight: 700; cursor: pointer; background: var(--green); color: var(--ink); display: inline-flex; align-items: center; gap: 6px; text-decoration: none; white-space: nowrap; }
+.btn:hover { background: var(--green-hover); color: #fff; }
+.btn.ghost { background: transparent; border: 1.5px solid var(--line); color: var(--text); }
+.btn.ghost:hover { border-color: var(--green); background: transparent; color: var(--text); }
+.btn.wa { background: #25D366; color: var(--ink); }
+.btn.wa:hover { background: #1DA851; color: #fff; }
+.btn.danger { background: transparent; border: 1.5px solid var(--line); color: var(--magenta); }
+.btn.danger:hover { border-color: var(--magenta); background: transparent; color: var(--magenta); }
+.btn.sm { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+main { flex: 1; min-height: 0; }
+section.view { display: grid; grid-template-columns: 330px minmax(0, 1fr); height: 100%; min-height: 0; }
+.side { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.side-head { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid var(--line); }
+.side-head h2 { font: 700 18px "Outfit", sans-serif; margin: 0; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; flex: 1; min-height: 0; }
+.list li button { width: 100%; text-align: left; border: 0; background: none; border-radius: 10px; padding: 10px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
+.list li button:hover { background: var(--bg); }
+.list li button[aria-current="true"] { background: var(--green-soft); }
+.li-top { display: flex; justify-content: space-between; gap: 8px; align-items: center; font-weight: 600; }
+.li-sub { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip { font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 99px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+.chip.green { background: var(--green-soft); color: var(--green-hover); border-color: transparent; }
+.chip.magenta { background: var(--magenta-soft); color: var(--magenta); border-color: transparent; }
+.chip.amber { background: var(--amber-soft); color: var(--amber); border-color: transparent; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .chip.green { color: #6ee77f; } }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--magenta); display: inline-block; }
+.search { width: 100%; padding: 8px 11px; border: 1.5px solid var(--line); border-radius: 9px; background: var(--panel); }
+
+.detail { overflow-y: auto; min-height: 0; padding: 22px max(16px, 3vw) 40px; }
+.empty { max-width: 520px; margin: 8vh auto; text-align: center; color: var(--muted); }
+.empty h3 { font: 700 22px "Outfit", sans-serif; color: var(--text); margin: 0 0 6px; }
+.drop { border: 2px dashed var(--line); border-radius: var(--radius); padding: 26px; text-align: center; color: var(--muted); background: var(--panel); margin-bottom: 18px; }
+.drop.over { border-color: var(--green); background: var(--green-soft); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; margin-bottom: 16px; }
+.card h3 { font: 700 16px "Outfit", sans-serif; margin: 0 0 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.title-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.title-row h1 { font: 700 26px/1.15 "Outfit", sans-serif; margin: 0; }
+.title-row .sub { color: var(--muted); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+label.f { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+label.f input, label.f select, label.f textarea, .in { padding: 8px 10px; border: 1.5px solid var(--line); border-radius: 9px; background: var(--panel); color: var(--text); font-weight: 400; font-size: 14.5px; }
+textarea { resize: vertical; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font-size: 12px; color: var(--muted); font-weight: 700; }
+td select, td input[type=number] { padding: 5px 7px; border: 1.5px solid var(--line); border-radius: 8px; background: var(--panel); max-width: 100%; }
+.code { font: 600 12px ui-monospace, Menlo, monospace; background: var(--bg); border: 1px solid var(--line); padding: 1px 6px; border-radius: 6px; }
+.muted { color: var(--muted); }
+.warn { background: var(--amber-soft); color: var(--amber); padding: 9px 12px; border-radius: 9px; font-size: 13.5px; margin-bottom: 12px; }
+pre.cv { white-space: pre-wrap; font: 13px/1.5 ui-monospace, Menlo, monospace; max-height: 360px; overflow: auto; background: var(--bg); padding: 12px; border-radius: 9px; margin: 10px 0 0; }
+
+/* WhatsApp */
+.chat { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 0; }
+.chat-head { padding: 14px max(16px, 3vw); border-bottom: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; gap: 10px; }
+.msgs { flex: 1; overflow-y: auto; background: var(--chat-bg); padding: 18px max(16px, 3vw); display: flex; flex-direction: column; gap: 8px; min-height: 140px; }
+.msg { max-width: min(560px, 82%); padding: 8px 12px 6px; border-radius: 12px; background: var(--bubble-in); box-shadow: 0 1px 1px rgba(0,0,0,.06); white-space: pre-wrap; }
+.msg.out { align-self: flex-end; background: var(--bubble-out); }
+.msg .meta { font-size: 11px; color: var(--muted); margin-top: 3px; text-align: right; }
+.sys { align-self: center; font-size: 12px; color: var(--muted); background: var(--panel); padding: 3px 10px; border-radius: 99px; }
+.composer { border-top: 1px solid var(--line); background: var(--panel); padding: 12px max(16px, 3vw) 16px; display: flex; flex-direction: column; gap: 8px; }
+.composer textarea { width: 100%; min-height: 70px; padding: 9px 11px; border: 1.5px solid var(--line); border-radius: 10px; background: var(--panel); }
+.closed-note { background: var(--magenta-soft); color: var(--magenta); padding: 10px 12px; border-radius: 10px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.overdue { color: var(--magenta); font-weight: 700; }
+
+/* Matching */
+.match { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 12px 4px; border-bottom: 1px solid var(--line); }
+.match:last-child { border-bottom: 0; }
+.score { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; font: 700 15px "Outfit", sans-serif; background: conic-gradient(var(--green) calc(var(--p) * 1%), var(--line) 0); position: relative; }
+.score::before { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: var(--panel); }
+.score span { position: relative; }
+.bars { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 5px; }
+.bars .code.ok { background: var(--green-soft); border-color: transparent; }
+.bars .code.gap { background: var(--magenta-soft); color: var(--magenta); border-color: transparent; }
+
+/* Modal + client card */
+dialog { border: 0; border-radius: 16px; padding: 0; width: min(880px, calc(100vw - 24px)); max-height: calc(100vh - 32px); background: var(--bg); color: var(--text); box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+dialog::backdrop { background: rgba(16,24,39,.5); }
+.dlg-head { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 14px 18px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.dlg-head h2 { margin: 0; font: 700 18px "Outfit", sans-serif; }
+.dlg-body { padding: 18px; }
+.ccard { background: #fff; color: #101827; border-radius: 14px; border: 1px solid #DCE3DD; padding: 26px 28px; margin-bottom: 18px; page-break-inside: avoid; break-inside: avoid; }
+.ccard .cc-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 3px solid #1FB33A; padding-bottom: 12px; margin-bottom: 16px; }
+.ccard .cc-brand { display: flex; align-items: center; gap: 8px; font: 700 16px "Outfit", sans-serif; }
+.ccard .cc-for { text-align: right; font-size: 12.5px; color: #566070; }
+.ccard h2 { font: 700 24px/1.15 "Outfit", sans-serif; margin: 0; }
+.ccard .cc-head { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 14px; }
+.ccard .cc-meta { color: #566070; margin-top: 3px; }
+.ccard .cc-score { text-align: center; font: 700 30px/1 "Outfit", sans-serif; color: #16892C; }
+.ccard .cc-score small { display: block; font: 600 11px "Figtree", sans-serif; color: #566070; margin-top: 4px; }
+.ccard .cc-summary { border-left: 3px solid #C026D3; padding: 4px 12px; margin: 0 0 14px; white-space: pre-wrap; }
+.ccard .cc-summary[contenteditable="true"]:focus { outline: 2px dashed #1FB33A; }
+.ccard th { color: #566070; } .ccard td, .ccard th { border-color: #E6EBE7; }
+.ccard .yes { color: #16892C; font-weight: 700; } .ccard .no { color: #C026D3; font-weight: 700; }
+.ccard .cc-foot { font-size: 11.5px; color: #566070; margin-top: 12px; }
+
+/* Sign-in gate: covers the workspace until the Super Admin signs in. */
+body.locked > header, body.locked > main { visibility: hidden; }
+.gate { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px; background: var(--bg); }
+.gate form { width: min(380px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 28px; display: flex; flex-direction: column; gap: 14px; }
+.gate h1 { font: 700 24px "Outfit", sans-serif; margin: 0; }
+.gate .logo { margin-bottom: 4px; }
+.gate .btn { justify-content: center; padding: 11px 14px; }
+.gate-msg { font-size: 13.5px; color: var(--magenta); min-height: 1em; }
+.gate-msg.info { color: var(--green-hover); }
+.who { font-size: 12.5px; color: var(--muted); }
+
+.toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 10px; font-weight: 600; z-index: 50; max-width: calc(100vw - 32px); box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+
+@media (max-width: 800px) {
+  section.view { grid-template-columns: 1fr; height: auto; }
+  .side { border-right: 0; border-bottom: 1px solid var(--line); max-height: 44vh; }
+  .chat { height: auto; }
+  .msgs { max-height: 55vh; }
+}
+@media print {
+  body > *:not(#cardDlg) { display: none !important; }
+  #cardDlg { position: static; display: block; width: auto; max-height: none; box-shadow: none; background: #fff; }
+  #cardDlg .dlg-head, #cardDlg .no-print { display: none !important; }
+  #cardDlg .dlg-body { padding: 0; }
+  .ccard { border: 0; padding: 0 0 18px; }
+}
+</style>
+</head>
+<body class="locked">
+<div class="gate" id="gate">
+  <form id="gateForm" novalidate>
+    <div class="logo"><span class="tile">G</span>CapLynk</div>
+    <h1>Super Admin</h1>
+    <label class="f">Email<input id="gateEmail" type="email" autocomplete="username" required></label>
+    <label class="f">Password<input id="gatePw" type="password" autocomplete="current-password" required></label>
+    <div class="gate-msg" id="gateMsg" role="alert"></div>
+    <button class="btn" id="gateBtn" type="submit">Sign in</button>
+  </form>
+</div>
+<header class="top">
+  <a class="logo" href="admin.html"><span class="tile">G</span>CapLynk</a>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="cvs" aria-selected="true">CVs</button>
+    <button role="tab" data-tab="wa">WhatsApp<span class="count" id="unreadCount" hidden></span></button>
+    <button role="tab" data-tab="roles">Roles &amp; matching</button>
+  </nav>
+  <span class="mode" id="modeBadge">Preview</span>
+  <span class="who" id="whoami"></span>
+  <button class="btn ghost sm" id="settingsBtn" type="button">Settings</button>
+  <button class="btn ghost sm" id="signOutBtn" type="button">Sign out</button>
+</header>
+
+<main>
+  <!-- Every CV candidates upload, parsed on demand -->
+  <section class="view" id="view-cvs">
+    <aside class="side">
+      <div class="side-head">
+        <h2>Candidates</h2>
+        <div class="row">
+          <label class="btn sm" for="cvFiles">Browse CVs</label>
+          <input id="cvFiles" type="file" multiple accept=".pdf,.docx,.txt,.md" hidden>
+          <button class="btn ghost sm" id="parseAllBtn" type="button">Parse all new</button>
+        </div>
+        <input class="search" id="candSearch" type="search" placeholder="Search name, skill, email">
+      </div>
+      <ul class="list" id="candList"></ul>
+    </aside>
+    <div class="detail" id="candDetail"></div>
+  </section>
+
+  <!-- M2 + M3: WhatsApp send and conversation tracker -->
+  <section class="view" id="view-wa" hidden>
+    <aside class="side">
+      <div class="side-head">
+        <h2>WhatsApp tracker</h2>
+        <div class="row" role="group" aria-label="Filter conversations">
+          <button class="btn sm" data-wf="open" type="button">Open</button>
+          <button class="btn ghost sm" data-wf="next" type="button">Next steps due</button>
+          <button class="btn ghost sm" data-wf="closed" type="button">Closed</button>
+          <button class="btn ghost sm" data-wf="all" type="button">All</button>
+        </div>
+        <button class="btn ghost sm" id="allLogsBtn" type="button">Download all logs (.txt)</button>
+      </div>
+      <ul class="list" id="chatList"></ul>
+    </aside>
+    <div class="detail chat" id="chatDetail"></div>
+  </section>
+
+  <!-- M4: role skill profiles, matching, client presentation -->
+  <section class="view" id="view-roles" hidden>
+    <aside class="side">
+      <div class="side-head">
+        <h2>Roles</h2>
+        <div class="row"><button class="btn sm" id="newRoleBtn" type="button">New role</button></div>
+      </div>
+      <ul class="list" id="roleList"></ul>
+    </aside>
+    <div class="detail" id="roleDetail"></div>
+  </section>
+</main>
+
+<dialog id="cardDlg">
+  <div class="dlg-head">
+    <h2>Candidate summary for the client</h2>
+    <div class="row">
+      <label class="row muted" style="font-size:13px"><input type="checkbox" id="hideContact" checked> Hide contact details</label>
+      <button class="btn ghost sm" id="copyCardBtn" type="button">Copy text</button>
+      <a class="btn ghost sm" id="emailCardBtn" href="#">Email</a>
+      <button class="btn sm" id="printCardBtn" type="button">Print or save PDF</button>
+      <button class="btn ghost sm" id="closeCardBtn" type="button" aria-label="Close">Close</button>
+    </div>
+  </div>
+  <div class="dlg-body" id="cardBody"></div>
+</dialog>
+
+<dialog id="settingsDlg">
+  <div class="dlg-head"><h2>Settings</h2><button class="btn ghost sm" id="closeSettingsBtn" type="button">Close</button></div>
+  <div class="dlg-body">
+    <div class="card">
+      <h3>WhatsApp</h3>
+      <div class="grid">
+        <label class="f">Default country code for numbers starting with 0
+          <input id="setCc" inputmode="numeric" placeholder="44">
+        </label>
+        <label class="f">Your name in messages
+          <input id="setSender" placeholder="Vishal at Gaplyn Services">
+        </label>
+      </div>
+      <p class="muted" style="margin:10px 0 0;font-size:13px">Send opens WhatsApp with the message ready. Paste the candidate's replies in with "Log their reply" so the log stays complete.</p>
+    </div>
+    <div class="card">
+      <h3>Data</h3>
+      <div class="row">
+        <button class="btn ghost sm" id="exportBtn" type="button">Export JSON</button>
+      </div>
+      <p class="muted" style="margin:10px 0 0;font-size:13px" id="storageNote"></p>
+    </div>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="firebase-config.js"></script>
+<script src="modules/skills.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

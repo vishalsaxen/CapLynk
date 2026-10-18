@@ -32,6 +32,15 @@ async function requireUser(req, res) {
   catch { res.status(401).send("Sign in first."); return null; }
 }
 
+// Claude parsing spends API credit, so only the Super Admin (admin.html) may call it; candidates sign up publicly.
+const ADMIN_EMAIL = "vaani.s@gaplyn.com";
+async function requireAdmin(req, res) {
+  const user = await requireUser(req, res);
+  if (!user) return null;
+  if ((user.email || "").toLowerCase() !== ADMIN_EMAIL || !user.email_verified) { res.status(403).send("Super Admin only."); return null; }
+  return user;
+}
+
 // ---------------------------------------------------------------- profiles
 const SFIA_CODES = "PROG Programming/software development; SWDN Software design; ARCH Solution architecture; TEST Testing; SINT Systems integration and build; RELM Release and deployment; CFMG Configuration management; DLMG Systems development management; DBDS Database design; DBAD Database administration; DATM Data management; DENG Data engineering; DTAN Data modelling and design; DATS Data science; MLNG Machine learning; BINT Business intelligence; VISL Data visualisation; ITOP Infrastructure operations; SYSP System software; NTDS Network design; NTAS Network support; SCTY Information security; SCAD Security operations; PENT Penetration testing; VUAS Vulnerability assessment; PRMG Project management; PGMG Programme management; BUAN Business situation analysis; REQM Requirements definition and management; BPRE Business process improvement; HCEV User experience design; URCH User research; USUP Incident management; PBMG Problem management; CHMG Change control; SLMO Service level management; RLMT Stakeholder relationship management; CNSL Consultancy; QUAS Quality assurance; ITSP Strategic planning; GOVN Governance";
 const LEVEL_GUIDE = "SFIA levels: 1 Follow, 2 Assist, 3 Apply, 4 Enable, 5 Ensure/advise, 6 Initiate/influence, 7 Set strategy. Judge level from responsibility and autonomy shown, not years alone.";
@@ -83,7 +92,7 @@ async function claudeTool(tool, system, content) {
 
 exports.profiles = onRequest({ ...opts, secrets: [ANTHROPIC_API_KEY] }, async (req, res) => {
   if (req.method !== "POST") return res.status(405).send("Use POST");
-  if (!(await requireUser(req, res))) return;
+  if (!(await requireAdmin(req, res))) return;
   const { action, text } = req.body || {};
   try {
     if (action === "cv") {

@@ -1,19 +1,43 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Profile created at sign-up: name, email or phone, role (candidate | employer).
+    // The one Super Admin account (admin.html). Its password lives in Firebase Auth, never in page code.
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email == 'vaani.s@gaplyn.com'
+        && request.auth.token.email_verified == true;
+    }
+    function signedIn() { return request.auth != null; }
+
     match /users/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
-      // Each user reads and writes only their own assistant conversations
-      // and recruiter data (modules 1-4: candidates, roles, WhatsApp conversations).
+      allow read, write: if signedIn() && request.auth.uid == uid;
+      allow read: if isAdmin();
       match /{collection}/{docId} {
-        allow read, write: if request.auth != null && request.auth.uid == uid
+        allow read, write: if signedIn() && request.auth.uid == uid
           && collection in ['chats', 'candidates', 'roles', 'conversations'];
       }
     }
-    // Phone-to-candidate index used by the WhatsApp webhook: server only.
-    match /waIndex/{phone} {
-      allow read, write: if false;
+
+    // CVs candidates upload on applicant.html. Candidates see and add only their own;
+    // the Super Admin sees, parses and edits them all.
+    match /cvs/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.ownerUid == request.auth.uid);
+      allow create: if isAdmin() || (
+        signedIn()
+        && request.auth.token.email_verified == true
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.status == 'new'
+        && request.resource.data.keys().hasOnly(['id', 'status', 'fileName', 'cvText', 'addedAt', 'ownerUid', 'ownerEmail', 'ownerName', 'name', 'skills'])
+        && request.resource.data.cvText is string && request.resource.data.cvText.size() <= 60000
+      );
+      allow update: if isAdmin();
+      allow delete: if isAdmin() || (signedIn() && resource.data.ownerUid == request.auth.uid && resource.data.status == 'new');
     }
+
+    // Super Admin workspace: roles and WhatsApp conversation logs.
+    match /roles/{id} { allow read, write: if isAdmin(); }
+    match /conversations/{id} { allow read, write: if isAdmin(); }
+
+    match /waIndex/{phone} { allow read, write: if false; }
   }
 }
