@@ -1,6 +1,8 @@
 # CapLynk
 
-CapLynk is a skills-based hiring platform from Gaplyn Services. It matches candidates to client roles using standard skill frameworks (such as SFIA) rather than keyword matching on CVs.
+CapLynk is a skills-based hiring platform from Gaplyn Services. It matches candidates to client roles using the CapLynk Capability Taxonomy (skills, roles and proficiency levels L1 to L6) rather than keyword matching on CVs.
+
+The taxonomy itself is not in this repo. The Super Admin imports the Excel workbook (CapLynk_Capability_Taxonomy_v1.0.xlsx) from admin.html > Settings > Import taxonomy, and it is stored in Firestore at `taxonomy/{meta,skills,roles}`, readable by the Super Admin only. Re-import the workbook to update it.
 
 ```
 public/index.html      Candidate sign-up / sign-in (email + password with email verification, or Google)
@@ -8,7 +10,7 @@ public/app.html        Candidate home; signed-out or unverified visitors go back
 public/applicant.html  Applicant Data: a candidate uploads their CV and sees its status
 public/admin.html      Super Admin: every uploaded CV, parsing, WhatsApp contact, .txt conversation logs, roles and matching
 public/admin.js        Super Admin workspace logic
-public/modules/skills.js  SFIA catalogue, CV heuristics and matching score
+public/modules/skills.js  Taxonomy loader, CV/JD heuristics and matching score
 public/assistant.html  CapLynk Assistant chat (Claude), no longer linked from the home page
 modules/functions/     Cloud Functions: profiles (Claude parsing, Super Admin only), waSend, waWebhook
 public/firebase-config.js  Your Firebase web config (shared by all pages)

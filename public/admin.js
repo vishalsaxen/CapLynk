@@ -2,7 +2,8 @@
 // CVs: every CV candidates upload on applicant.html (top-level cvs/), parsed here (Claude via /api/profiles, or the offline heuristics).
 // WhatsApp: wa.me click-to-chat, with each conversation kept as a log that downloads as .txt.
 // Tracker: per-candidate conversation with status, next step, due date, and close/reopen.
-// Roles: SFIA skill profiles, ranked matches, and a printable client summary card.
+// Roles: skill profiles from the CapLynk Capability Taxonomy, ranked matches, and a printable client summary card.
+// Taxonomy: imported from Gaplyn's Excel workbook in Settings and kept in Firestore taxonomy/{meta,skills,roles}.
 // Storage: top-level Firestore collections cvs/, roles/, conversations/ that only the admin account can read (see firestore.rules).
 (() => {
   const S = window.CapSkills;
@@ -159,7 +160,7 @@
     let p, by = "heuristic";
     try { p = (await api("/api/profiles", { action: "cv", text: c.cvText })).profile; by = "claude"; }
     catch (e) { if (LIVE && !quiet) toast("Claude parse unavailable, used the built-in parser."); p = S.parseCvText(c.cvText, c.fileName); }
-    const valid = (p.skills || []).filter((s) => S.BY_CODE[s.code]).map((s) => ({ code: s.code, level: Math.max(1, Math.min(7, +s.level || 3)), evidence: s.evidence || "" }));
+    const valid = (p.skills || []).filter((s) => S.BY_CODE[s.code]).map((s) => ({ code: s.code, level: clampLevel(s.level), evidence: s.evidence || "" }));
     Object.assign(c, {
       // The name a candidate signed up with beats the offline parser's guess; Claude reads the CV properly.
       name: (by === "claude" ? p.name || accountName(c) : accountName(c) || p.name) || c.name || "", email: p.email || c.email || accountEmail(c), phone: p.phone || "", location: p.location || "",
@@ -199,7 +200,7 @@
     const c = state.candidates.find((x) => x.id === state.candId);
     const drop = `<div class="drop" id="drop"><strong>Drop CVs here</strong> or use <em>Browse CVs</em> to add one yourself. Candidates' own uploads from Applicant Data appear in the list on their own.</div>`;
     if (!c) {
-      $("candDetail").innerHTML = drop + `<div class="empty"><h3>No CVs yet</h3><p>CVs that candidates upload under Applicant Data show up here. Parse them to pull out contact details and an SFIA skill profile, then contact the candidate on WhatsApp.</p></div>`;
+      $("candDetail").innerHTML = drop + `<div class="empty"><h3>No CVs yet</h3><p>CVs that candidates upload under Applicant Data show up here. Parse them to pull out contact details and a skill profile from the CapLynk Capability Taxonomy, then contact the candidate on WhatsApp.</p></div>`;
       return wireDrop();
     }
     const dup = duplicateOf(c);
@@ -217,6 +218,7 @@
         </div>
       </div>
       ${c.status === "new" ? '<div class="warn">Not parsed yet. Parse to fill in contact details and skills, or type them in yourself.</div>' : ""}
+      ${oldSkills(c.skills) ? '<div class="warn">This profile still uses old SFIA skills. Click Parse again to rebuild it on the CapLynk Capability Taxonomy.</div>' : ""}
       ${dup ? `<div class="warn">Possible duplicate of <a href="#" id="dupLink">${h(candLabel(dup))}</a> (same email or phone).</div>` : ""}
       <div class="card"><h3>Personal and contact details</h3>
         <div class="grid">
@@ -227,7 +229,7 @@
         <label class="f" style="margin-top:12px">Recruiter summary
           <textarea data-f="summary" rows="3" placeholder="A few lines on this candidate, used on the client card.">${h(c.summary)}</textarea></label>
       </div>
-      <div class="card"><h3>Skill profile (SFIA) <button class="btn ghost sm" id="addSkillBtn" type="button">Add skill</button></h3>
+      <div class="card"><h3>Skill profile <button class="btn ghost sm" id="addSkillBtn" type="button">Add skill</button></h3>
         ${skillTable(c.skills, "cand")}
       </div>
       <div class="card"><h3>CV text</h3><details><summary class="muted">Show the extracted text</summary><pre class="cv">${h(c.cvText)}</pre></details></div>`;
@@ -255,13 +257,25 @@
     if (dup) $("dupLink").onclick = (e) => { e.preventDefault(); state.candId = dup.id; renderCandidates(); };
   }
   function field(key, label, val, type = "text") { return `<label class="f">${label}<input data-f="${key}" type="${type}" value="${h(val ?? "")}"></label>`; }
-  function unusedCode(list) { const used = new Set(list.map((s) => s.code)); return (S.SFIA.find((s) => !used.has(s.code)) || S.SFIA[0]).code; }
+  const clampLevel = (v) => Math.max(1, Math.min(S.LEVELS.length - 1 || 6, +v || 3));
+  const oldSkills = (list) => (list || []).some((x) => !S.BY_CODE[x.code]);
+  function unusedCode(list) { const used = new Set(list.map((s) => s.code)); return (S.SKILLS.find((s) => !used.has(s.code)) || S.SKILLS[0])?.code || ""; }
+  // Grouped by domain and category, as in the taxonomy's Skills sheet. Codes from before the taxonomy stay visible as "old".
+  let optionCache = "";
   function skillOptions(sel) {
-    let cat = "", out = "";
-    for (const s of S.SFIA) { if (s.category !== cat) { out += (cat ? "</optgroup>" : "") + `<optgroup label="${s.category}">`; cat = s.category; } out += `<option value="${s.code}" ${s.code === sel ? "selected" : ""}>${s.name} (${s.code})</option>`; }
-    return out + "</optgroup>";
+    if (!optionCache) {
+      let grp = "";
+      for (const s of S.SKILLS) {
+        const g = s.domain + " · " + s.category;
+        if (g !== grp) { optionCache += (grp ? "</optgroup>" : "") + `<optgroup label="${h(g)}">`; grp = g; }
+        optionCache += `<option value="${h(s.code)}">${h(s.name)} (${h(s.code)})</option>`;
+      }
+      if (grp) optionCache += "</optgroup>";
+    }
+    const old = sel && !S.BY_CODE[sel] ? `<option value="${h(sel)}">Old SFIA skill: ${h(sel)}</option>` : "";
+    return old + optionCache.replace(`value="${h(sel)}"`, `value="${h(sel)}" selected`);
   }
-  function levelOptions(sel) { return S.LEVELS.slice(1).map((l, i) => `<option value="${i + 1}" ${+sel === i + 1 ? "selected" : ""}>${l}</option>`).join(""); }
+  function levelOptions(sel) { return S.LEVELS.slice(1).map((l, i) => `<option value="${i + 1}" ${+sel === i + 1 ? "selected" : ""}>${h(l)}</option>`).join(""); }
   function skillTable(list, kind) {
     if (!list.length) return `<p class="muted" style="margin:0">No skills yet. Parse the ${kind === "cand" ? "CV" : "description"} or add them yourself.</p>`;
     return `<table><thead><tr><th>Skill</th><th>${kind === "cand" ? "Level" : "Minimum level"}</th><th>${kind === "cand" ? "Evidence" : "Must have"}</th><th></th></tr></thead><tbody>
@@ -487,7 +501,7 @@
     $("roleList").querySelectorAll("button").forEach((b) => (b.onclick = () => { state.roleId = b.dataset.id; renderRoles(); }));
 
     const r = state.roles.find((x) => x.id === state.roleId);
-    if (!r) { $("roleDetail").innerHTML = `<div class="empty"><h3>Match candidates to a role</h3><p>Create a role, paste the job description, and CapLynk builds its SFIA skill profile, ranks your parsed candidates, and lays out a summary card for the client.</p><button class="btn" id="emptyRole" type="button">New role</button></div>`; $("emptyRole").onclick = () => $("newRoleBtn").click(); return; }
+    if (!r) { $("roleDetail").innerHTML = `<div class="empty"><h3>Match candidates to a role</h3><p>Create a role, pick its taxonomy role or paste the job description, and CapLynk builds its skill profile, ranks your parsed candidates, and lays out a summary card for the client.</p><button class="btn" id="emptyRole" type="button">New role</button></div>`; $("emptyRole").onclick = () => $("newRoleBtn").click(); return; }
     r.shortlist ||= []; r.summaries ||= {};
     const parsed = state.candidates.filter((c) => c.status === "parsed" || (c.skills || []).length);
     const ranked = parsed.map((c) => ({ c, m: S.match(c, r) })).sort((a, b) => b.m.score - a.m.score);
@@ -501,13 +515,18 @@
           <label class="f">Location<input data-r="location" value="${h(r.location)}"></label>
         </div>
         <label class="f" style="margin-top:12px">Job description<textarea data-r="description" rows="6" placeholder="Paste the client's job description">${h(r.description)}</textarea></label>
+        <div class="grid" style="margin-top:12px">
+          <label class="f">Taxonomy role<select data-r="taxRoleId"><option value="">Find from the job title</option>${roleOptions(r.taxRoleId)}</select></label>
+          <label class="f">Seniority band<select data-r="band"><option value="">From the description</option>${S.BANDS.map((b) => `<option ${r.band === b ? "selected" : ""}>${b}</option>`).join("")}</select></label>
+        </div>
         <div class="row" style="margin-top:10px">
           <label class="btn ghost sm" for="jdFile">Upload JD file</label>
           <input id="jdFile" type="file" accept=".pdf,.docx,.txt,.md" hidden>
           <button class="btn ghost sm" id="extractBtn" type="button">Build skill profile from description</button>
         </div>
       </div>
-      <div class="card"><h3>Job skill profile (SFIA) <button class="btn ghost sm" id="addReqBtn" type="button">Add skill</button></h3>${skillTable(r.skills, "role")}</div>
+      ${oldSkills(r.skills) ? '<div class="warn">This role still uses old SFIA skills. Click "Build skill profile" to rebuild it on the CapLynk Capability Taxonomy.</div>' : ""}
+      <div class="card"><h3>Job skill profile${r.taxRoleName ? ` <span class="muted" style="font:500 13px Figtree">from ${h(r.taxRoleName)}${r.band ? ", " + h(r.band) : ""}</span>` : ""} <button class="btn ghost sm" id="addReqBtn" type="button">Add skill</button></h3>${skillTable(r.skills, "role")}</div>
       <div class="card"><h3>Matching candidates <span class="muted" style="font:500 13px Figtree">${parsed.length} parsed candidates ranked</span></h3>
         ${!r.skills.length ? '<p class="muted" style="margin:0">Add required skills to rank candidates.</p>' : !ranked.length ? '<p class="muted" style="margin:0">Parse some CVs first.</p>' : ranked.map(({ c, m }) => `
           <div class="match">
@@ -535,12 +554,23 @@
     };
     $("extractBtn").onclick = async () => {
       const desc = $("roleDetail").querySelector("[data-r=description]").value.trim(); r.description = desc;
-      if (!desc) return toast("Paste the job description first.");
-      let skills;
-      try { skills = (await api("/api/profiles", { action: "job", text: desc })).profile.skills; }
-      catch { skills = S.parseJobText(desc); }
-      r.skills = skills.filter((s) => S.BY_CODE[s.code]).map((s) => ({ code: s.code, minLevel: Math.max(1, Math.min(7, +s.minLevel || 3)), mustHave: !!s.mustHave }));
-      await save("roles", r); renderRoles(); toast(r.skills.length ? "Skill profile built. Adjust levels and must-haves as needed." : "No SFIA skills recognised. Add them by hand.");
+      if (!desc && !r.taxRoleId) return toast("Pick a taxonomy role or paste the job description first.");
+      if (!S.META.loaded) return toast("Import the CapLynk Capability Taxonomy in Settings first.");
+      // Gaplyn's role map comes first (picked role, or one named in the title); the JD adds skills it mentions beyond that.
+      const local = S.parseJobText(desc, r.title);
+      const role = S.ROLES.find((x) => x.id === r.taxRoleId) || (local.role && S.ROLES.find((x) => x.id === local.role.id));
+      const band = r.band || local.band;
+      const base = role ? S.roleProfile(role, S.BANDS.indexOf(band)) : [];
+      let found;
+      try { found = desc ? (await api("/api/profiles", { action: "job", text: desc })).profile.skills : []; }
+      catch { found = local.filter((x) => !base.some((b) => b.code === x.code)); }
+      const have = new Set(base.map((x) => x.code));
+      const extra = (found || []).filter((x) => S.BY_CODE[x.code] && !have.has(x.code)).slice(0, role ? 4 : 12);
+      r.skills = [...base, ...extra].map((x) => ({ code: x.code, minLevel: clampLevel(x.minLevel), mustHave: !!x.mustHave }));
+      r.taxRoleName = role ? role.name : ""; r.band = role ? band : r.band;
+      if (role && !r.taxRoleId) r.taxRoleId = role.id;
+      await save("roles", r); renderRoles();
+      toast(r.skills.length ? (role ? "Built from " + role.name + " (" + band + ")" : "Skill profile built") + ". Adjust levels and must-haves as needed." : "No taxonomy skills recognised. Pick a taxonomy role or add skills by hand.");
     };
     $("roleDetail").querySelectorAll("[data-sl]").forEach((el) => (el.onchange = () => {
       const id = el.dataset.sl; r.shortlist = el.checked ? [...new Set([...r.shortlist, id])] : r.shortlist.filter((x) => x !== id);
@@ -551,12 +581,21 @@
     $("delRoleBtn").onclick = async () => { if (!confirm("Delete the role " + r.title + "?")) return; await remove("roles", r.id); state.roleId = state.roles[0]?.id || null; renderRoles(); };
   }
 
+  function roleOptions(sel) {
+    let fam = "", out = "";
+    for (const x of [...S.ROLES].sort((a, b) => (a.family + a.name).localeCompare(b.family + b.name))) {
+      if (x.family !== fam) { out += (fam ? "</optgroup>" : "") + `<optgroup label="${h(x.family)}">`; fam = x.family; }
+      out += `<option value="${h(x.id)}" ${x.id === sel ? "selected" : ""}>${h(x.name)}</option>`;
+    }
+    return out + (fam ? "</optgroup>" : "");
+  }
+
   function templateSummary(c, r, m) {
     const strong = m.rows.filter((x) => x.met).sort((a, b) => b.level - a.level).slice(0, 3).map((x) => x.name.toLowerCase());
     const gaps = m.rows.filter((x) => !x.met).map((x) => x.name.toLowerCase());
     const yrs = c.yearsExperience ? ` with ${c.yearsExperience} years' experience` : "";
     return `${first(c.name)} is ${/^[aeiou]/i.test(c.headline || "") ? "an" : "a"} ${c.headline || "candidate"}${yrs}${c.location ? ", based in " + c.location : ""}. ` +
-      `Against the ${r.title} profile they meet ${m.met} of ${m.rows.length} required skills at or above the SFIA level asked for` +
+      `Against the ${r.title} profile they meet ${m.met} of ${m.rows.length} required skills at or above the level asked for` +
       (strong.length ? `, with particular strength in ${strong.join(", ").replace(/, ([^,]*)$/, " and $1")}.` : ".") +
       (gaps.length ? ` Areas to probe at interview: ${gaps.join(", ")}.` : "");
   }
@@ -593,11 +632,11 @@
           ${hide ? "" : `<div class="cc-meta">${h([c.email, c.phone, c.linkedin].filter(Boolean).join(" · "))}</div>`}</div>
           <div class="cc-score">${m.score}%<small>skills match</small></div></div>
         <p class="cc-summary" contenteditable="true" spellcheck="true">${h(r.summaries[c.id] || "")}</p>
-        <table><thead><tr><th>Skill (SFIA)</th><th>Required</th><th>Candidate</th><th></th></tr></thead><tbody>
+        <table><thead><tr><th>Skill</th><th>Required</th><th>Candidate</th><th></th></tr></thead><tbody>
           ${m.rows.map((x) => `<tr><td>${h(x.name)} <span style="color:#566070;font-size:12px">${x.code}${x.mustHave ? " · essential" : ""}</span></td><td>Level ${x.need}</td><td>${x.level ? "Level " + x.level : "Not evidenced"}</td><td class="${x.met ? "yes" : "no"}">${x.met ? "✓ Meets" : "Gap"}</td></tr>`).join("")}
         </tbody></table>
         ${other ? `<div class="cc-foot"><strong>Also brings:</strong> ${h(other)}</div>` : ""}
-        <div class="cc-foot">Skill levels follow SFIA (1 Follow to 7 Set strategy). Presented by ${h(settings.sender || "Gaplyn Services")}.</div>
+        <div class="cc-foot">Skills and levels follow the CapLynk Capability Taxonomy (${h(S.LEVELS[1] || "L1")} to ${h(S.LEVELS[S.LEVELS.length - 1] || "L6")}). Presented by ${h(settings.sender || "Gaplyn Services")}.</div>
       </article>`;
     }).join("") || '<p class="muted">Shortlist candidates on the role first.</p>';
     $("cardBody").querySelectorAll(".cc-summary").forEach((p) => (p.onblur = () => { r.summaries[p.closest(".ccard").dataset.id] = p.innerText.trim(); save("roles", r); }));
@@ -617,6 +656,51 @@
   $("closeCardBtn").onclick = () => { $("cardDlg").close(); renderRoles(); };
   $("printCardBtn").onclick = () => window.print();
   $("copyCardBtn").onclick = async () => { try { await navigator.clipboard.writeText(cardText()); toast("Copied. Paste it into an email to the client."); } catch { toast("Copy blocked by the browser."); } };
+
+  // ---------- CapLynk Capability Taxonomy ----------
+  // Imported from Gaplyn's Excel workbook and kept in Firestore (taxonomy/meta, taxonomy/skills, taxonomy/roles),
+  // readable only by the Super Admin. Re-import the workbook to update it; skill and role IDs are the join keys.
+  const TAX_KEY = "caplynk.taxonomy";
+  const SHEETJS = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+  function useTaxonomy(tax) {
+    S.load(tax); optionCache = "";
+    renderTaxonomy(); render();
+  }
+  async function loadTaxonomy() {
+    if (!LIVE) { const t = lsGet(TAX_KEY, null); if (t) useTaxonomy(t); else renderTaxonomy(); return; }
+    try {
+      const get = (id) => fb.fs.getDoc(fb.fs.doc(fb.db, "taxonomy", id));
+      const [m, sk, ro] = await Promise.all([get("meta"), get("skills"), get("roles")]);
+      if (m.exists() && sk.exists()) useTaxonomy({ ...m.data(), skills: sk.data().items || [], roles: ro.exists() ? ro.data().items || [] : [] });
+      else renderTaxonomy();
+    } catch (e) { console.error(e); toast("Couldn't load the capability taxonomy. Check the Firestore rules are deployed."); renderTaxonomy(); }
+  }
+  function renderTaxonomy() {
+    const m = S.META;
+    $("taxBanner").hidden = m.loaded;
+    $("taxStatus").textContent = m.loaded
+      ? `${m.title}${m.version ? " v" + m.version : ""}: ${S.SKILLS.length} skills, ${S.ROLES.length} roles, levels ${S.LEVELS[1]} to ${S.LEVELS[S.LEVELS.length - 1]}.`
+      : "No taxonomy imported yet. Import the CapLynk Capability Taxonomy workbook (.xlsx).";
+  }
+  async function importTaxonomy(file) {
+    try {
+      if (!window.XLSX) await loadScript(SHEETJS);
+      const wb = window.XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const sheets = Object.fromEntries(wb.SheetNames.map((n) => [n, window.XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: null, raw: true })]));
+      const tax = JSON.parse(JSON.stringify(S.fromSheets(sheets)));
+      if (!confirm(`Import ${tax.title}${tax.version ? " v" + tax.version : ""}: ${tax.skills.length} skills and ${tax.roles.length} roles? This replaces the framework CapLynk uses for every profile.`)) return;
+      if (LIVE) {
+        const { setDoc, doc } = fb.fs, at = now();
+        await setDoc(doc(fb.db, "taxonomy", "skills"), { items: tax.skills, importedAt: at });
+        await setDoc(doc(fb.db, "taxonomy", "roles"), { items: tax.roles, importedAt: at });
+        await setDoc(doc(fb.db, "taxonomy", "meta"), { title: tax.title, version: tax.version, levels: tax.levels, fileName: file.name, importedAt: at, importedBy: fb.user.email, skillCount: tax.skills.length, roleCount: tax.roles.length });
+      } else lsSet(TAX_KEY, tax);
+      useTaxonomy(tax);
+      toast("Imported " + tax.skills.length + " skills and " + tax.roles.length + " roles. Parse CVs and rebuild roles to use it.");
+    } catch (e) { console.error(e); toast(e.message || "Couldn't read that workbook."); }
+  }
+  $("taxFile").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) importTaxonomy(f); };
+  $("taxBannerBtn").onclick = () => $("settingsBtn").click();
 
   // ---------- settings ----------
   $("settingsBtn").onclick = () => {
@@ -639,6 +723,7 @@
       Object.assign(state, { candidates: d.candidates || [], roles: d.roles || [], conversations: d.conversations || {} });
       state.candId = state.candidates[0]?.id || null; state.roleId = state.roles[0]?.id || null;
       $("gate").hidden = true; document.body.classList.remove("locked");
+      loadTaxonomy();
       return render();
     }
     $("modeBadge").textContent = "Super Admin"; $("modeBadge").classList.add("live");
@@ -689,6 +774,7 @@
       }, (e) => { console.error(e); toast("Couldn't load CVs. Check the Firestore rules are deployed."); }));
       const rs = await fs.getDocs(fs.collection(db, "roles")).catch(() => null);
       state.roles = rs ? rs.docs.map((d) => d.data()) : []; state.roleId = state.roles[0]?.id || null;
+      await loadTaxonomy();
       unsub.push(fs.onSnapshot(fs.collection(db, "conversations"), (snap) => {
         snap.docChanges().forEach((ch) => { if (ch.type === "removed") delete state.conversations[ch.doc.id]; else state.conversations[ch.doc.id] = ch.doc.data(); });
         if (state.tab === "wa" && !keepTyping()) renderChats(); else renderUnread();

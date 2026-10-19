@@ -4,10 +4,10 @@ One page, `web/recruiter.html`, with three tabs. It builds on the sign-in and ap
 
 | Module | Where | What it does |
 |---|---|---|
-| M1 CV parser | CVs tab | Browse or drop PDF, DOCX or TXT CVs. They are stored unparsed; parse one or all later. Parsing fills name, email, phone, location, LinkedIn, title, years, and an SFIA skill profile. Flags possible duplicates (same email or phone). |
+| M1 CV parser | CVs tab | Browse or drop PDF, DOCX or TXT CVs. They are stored unparsed; parse one or all later. Parsing fills name, email, phone, location, LinkedIn, title, years, and a skill profile on the CapLynk Capability Taxonomy. Flags possible duplicates (same email or phone). |
 | M2 WhatsApp send | WhatsApp button on a candidate or match | Message templates (intro, interest, interview, follow-up, close). Sends via the WhatsApp Business Cloud API, or opens WhatsApp with the message ready (wa.me) when the API isn't set up. |
 | M3 WhatsApp tracker | WhatsApp tab | One conversation per candidate: status (New, Awaiting reply, Replied, Closed), next step with due date, linked role, "Next steps due" filter, unread badge. Close a chat with a reason to disable messaging; reopen any time. With the API, replies and delivery receipts arrive through the webhook; with wa.me, paste replies in with "Log their reply". |
-| M4 Skills, matching, client card | Roles & matching tab | Paste a job description to build its SFIA skill profile (minimum level, must-have). Parsed candidates are ranked 0 to 100. Shortlist, then "Present to client" opens a printable card per candidate with the match table and an editable summary. Contact details are hidden by default. Print or save PDF, copy as text, or email. |
+| M4 Skills, matching, client card | Roles & matching tab | Paste a job description to build its skill profile from a taxonomy role and seniority band (minimum level, must-have). Parsed candidates are ranked 0 to 100. Shortlist, then "Present to client" opens a printable card per candidate with the match table and an editable summary. Contact details are hidden by default. Print or save PDF, copy as text, or email. |
 
 Parsing, role profiles and summaries use Claude through `/api/profiles` when deployed. Without it (preview mode, or the call fails) the page uses the built-in parser in `web/skills.js`, which is good for clean CVs and always editable.
 
@@ -16,7 +16,7 @@ Parsing, role profiles and summaries use Claude through `/api/profiles` when dep
 ```
 web/recruiter.html   Page and styles (served at /modules/recruiter.html)
 web/recruiter.js     App logic and storage
-web/skills.js        SFIA catalogue, CV/JD heuristics, matching score (works in Node too)
+web/skills.js        Taxonomy loader, CV/JD heuristics, matching score (works in Node too)
 web/samples.js       Three fictional CVs and a role for trying it out
 functions/index.js   Cloud Functions: profiles, waSend, waWebhook
 firestore.rules.additions   Rules to merge into ../firestore.rules
@@ -50,6 +50,6 @@ WA_TEMPLATE_LANG=en
 4. Deploy, then in Meta set the webhook URL to `https://<your-site>/api/whatsapp/webhook`, the verify token to `WA_VERIFY_TOKEN`, and subscribe to `messages`.
 5. In CapLynk Settings choose "WhatsApp Business Cloud API".
 
-## SFIA
+## Capability taxonomy
 
-`skills.js` carries a working subset of 41 SFIA 8 skills with keyword evidence. Levels use SFIA's 1 (Follow) to 7 (Set strategy). The match score gives each required skill credit up to its minimum level; must-haves count double. Add skills to `SFIA` and `KEYWORDS` in `skills.js` and to `SFIA_CODES` in `functions/index.js`.
+Skills, roles and levels come from the CapLynk Capability Taxonomy workbook, imported by the Super Admin in admin.html > Settings and stored in Firestore `taxonomy/{meta,skills,roles}` (Super Admin only; the workbook is not in this repo). Levels run L1 Aware to L6 Authority. A role's profile comes from the Role Skill Map at the chosen band (Junior 0-2 years, Mid 3-5, Senior 6-9, Lead 10+); Core skills are must-haves. The match score gives each required skill credit up to its minimum level; must-haves count double. The `profiles` function reads the same Firestore taxonomy, so Claude only uses its skill IDs.

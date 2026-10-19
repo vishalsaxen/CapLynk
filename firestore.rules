@@ -38,6 +38,8 @@ service cloud.firestore {
     // Super Admin workspace: roles and WhatsApp conversation logs.
     match /roles/{id} { allow read, write: if isAdmin(); }
     match /conversations/{id} { allow read, write: if isAdmin(); }
+    // CapLynk Capability Taxonomy (Gaplyn's own framework), imported on admin.html: meta, skills, roles.
+    match /taxonomy/{doc} { allow read, write: if isAdmin(); }
 
     match /waIndex/{phone} { allow read, write: if false; }
   }
