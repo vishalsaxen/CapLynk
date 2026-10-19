@@ -126,6 +126,12 @@ dialog::backdrop { background: rgba(16,24,39,.5); }
 .dlg-head { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 14px 18px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .dlg-head h2 { margin: 0; font: 700 18px "Outfit", sans-serif; }
 .dlg-body { padding: 18px; }
+.bulk-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; }
+.bulk-list label { display: flex; gap: 10px; align-items: center; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 14px; cursor: pointer; }
+.bulk-list li:last-child label { border-bottom: 0; }
+.bulk-list label > span:nth-child(2) { flex: 1; min-width: 0; }
+.bulk-list label.off { cursor: default; opacity: .7; }
+.bulk-list input { width: 17px; height: 17px; accent-color: var(--green); flex: none; }
 .ccard { background: #fff; color: #101827; border-radius: 14px; border: 1px solid #DCE3DD; padding: 26px 28px; margin-bottom: 18px; page-break-inside: avoid; break-inside: avoid; }
 .ccard .cc-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 3px solid #1FB33A; padding-bottom: 12px; margin-bottom: 16px; }
 .ccard .cc-brand { display: flex; align-items: center; gap: 8px; font: 700 16px "Outfit", sans-serif; }
@@ -208,6 +214,7 @@ body.locked > header, body.locked > main { visibility: hidden; }
           <input id="cvFiles" type="file" multiple accept=".pdf,.docx,.txt,.md" hidden>
           <button class="btn ghost sm" id="parseAllBtn" type="button">Parse all new</button>
           <button class="btn ghost sm" id="allCvsBtn" type="button">Download all CVs</button>
+          <button class="btn ghost sm" id="bulkBtn" type="button">Bulk WhatsApp</button>
         </div>
         <input class="search" id="candSearch" type="search" placeholder="Search name, skill, email">
       </div>
@@ -274,7 +281,7 @@ body.locked > header, body.locked > main { visibility: hidden; }
           <input id="setSender" placeholder="Vishal at Gaplyn Services">
         </label>
       </div>
-      <p class="muted" style="margin:10px 0 0;font-size:13px">Send opens WhatsApp with the message ready. Paste the candidate's replies in with "Log their reply" so the log stays complete.</p>
+      <p class="muted" style="margin:10px 0 0;font-size:13px" id="waModeNote"></p>
     </div>
     <div class="card">
       <h3>Capability framework</h3>
@@ -292,6 +299,27 @@ body.locked > header, body.locked > main { visibility: hidden; }
       </div>
       <p class="muted" style="margin:10px 0 0;font-size:13px" id="storageNote"></p>
     </div>
+  </div>
+</dialog>
+
+<dialog id="bulkDlg">
+  <div class="dlg-head"><h2>Bulk WhatsApp</h2><button class="btn ghost sm" id="closeBulkBtn" type="button">Close</button></div>
+  <div class="dlg-body">
+    <div class="warn" id="bulkNote" hidden></div>
+    <div class="card"><h3>Message</h3>
+      <div class="grid">
+        <label class="f">Start from<select id="bulkTpl"></select></label>
+        <label class="f">About role<select id="bulkRole"></select></label>
+      </div>
+      <label class="f" style="margin-top:12px">Message<textarea id="bulkText" rows="4" maxlength="1000"></textarea></label>
+      <p class="muted" style="margin:8px 0 0;font-size:13px">{first} becomes each candidate's first name and {role} the role title. WhatsApp only allows a business to start a chat with an approved template, so CapLynk sends this text inside your template as one paragraph, up to 1,000 characters.</p>
+    </div>
+    <div class="card"><h3>Recipients <button class="btn ghost sm" id="bulkAllBtn" type="button">Select all who can receive</button></h3>
+      <p class="muted" style="margin:0 0 10px;font-size:13px" id="bulkCount"></p>
+      <ul class="bulk-list" id="bulkList"></ul>
+      <p class="muted" style="margin:10px 0 0;font-size:13px">Only candidates who agreed to WhatsApp messages can be picked. They agree on Applicant Data, or you can record their consent on their CV. Anyone who replies STOP is skipped from then on.</p>
+    </div>
+    <div class="row"><button class="btn wa" id="bulkSendBtn" type="button" disabled>Send</button><span class="muted" id="bulkProgress" role="status" style="font-size:13.5px"></span></div>
   </div>
 </dialog>
 

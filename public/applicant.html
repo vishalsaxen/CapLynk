@@ -41,6 +41,11 @@ ul.cvs li:last-child { border-bottom: 0; }
 .chip.new { background: var(--amber-soft); color: var(--amber); }
 .chip.done { background: var(--green-soft); color: var(--green-hover); }
 .empty { color: var(--muted); padding: 14px; }
+.wa { display: grid; gap: 12px; margin: 0 0 18px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; }
+.wa label.f { display: grid; gap: 6px; font-weight: 600; font-size: 14px; }
+.wa input[type=tel] { font: inherit; padding: 9px 12px; border: 1.5px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); max-width: 320px; }
+.wa label.check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--text); }
+.wa label.check input { margin-top: 3px; width: 17px; height: 17px; accent-color: var(--green); flex: none; }
 </style>
 </head>
 <body>
@@ -50,7 +55,12 @@ ul.cvs li:last-child { border-bottom: 0; }
 </header>
 <main>
   <h1>Applicant Data</h1>
-  <p>Upload your latest CV. The CapLynk team reviews it against the CapLynk Capability Taxonomy and will contact you on WhatsApp about suitable roles.</p>
+  <p>Upload your latest CV. The CapLynk team reviews it against the CapLynk Capability Taxonomy and will contact you about suitable roles.</p>
+
+  <div class="wa">
+    <label class="f" for="waPhone">WhatsApp number (optional)<input id="waPhone" type="tel" autocomplete="tel" placeholder="+91 98765 43210"></label>
+    <label class="check"><input type="checkbox" id="waConsent"> I agree that Gaplyn Services may message me on WhatsApp about roles that match my skills. I can reply STOP at any time to stop these messages.</label>
+  </div>
 
   <div class="drop" id="drop">
     <label class="btn" for="cvFile">Browse CV</label>
@@ -136,7 +146,11 @@ if (!cfg.apiKey) {
       const c = {
         id: crypto.randomUUID(), status: "new", fileName: file.name, cvText: text.slice(0, 60000), addedAt: new Date().toISOString(),
         ownerUid: user.uid, ownerEmail: user.email || "", ownerName: user.displayName || "", name: "", skills: [],
+        waConsent: $("waConsent").checked,
       };
+      const waPhone = $("waPhone").value.replace(/[^\d+ ()-]/g, "").trim().slice(0, 20);
+      if (waPhone) c.waPhone = waPhone;
+      if (c.waConsent) c.waConsentAt = c.addedAt;
       // Keep the original file too, so the CapLynk team can download the CV exactly as it was sent.
       status("Uploading " + file.name + "…");
       const path = "cvs/" + user.uid + "/" + c.id + "/" + file.name.replace(/[^\w.\- ]+/g, "_");

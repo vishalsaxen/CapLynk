@@ -33,22 +33,25 @@ Data lives in Firestore at `users/{uid}/candidates`, `users/{uid}/roles` and `us
 
 ## WhatsApp Business Cloud API
 
-1. In Meta for Developers create an app with the WhatsApp product, add a business phone number, and create a permanent system-user token.
-2. Create and get approval for a message template named `caplynk_outreach` with one body variable, e.g. `{{1}}`. WhatsApp only lets businesses start a conversation, or write after 24 hours of silence, with an approved template; CapLynk puts your message text in that variable.
-3. Set the secrets and params:
+Until this is set up, admin.html uses wa.me click-to-chat (one candidate at a time). Once `waSend` reports the API is configured, admin.html sends from CapLynk, replies arrive in the tracker through the webhook, and **Bulk WhatsApp** (CVs tab, and "WhatsApp shortlist" on a role) is switched on.
 
-```bash
-firebase functions:secrets:set WA_TOKEN
-firebase functions:secrets:set WA_APP_SECRET
-firebase functions:secrets:set WA_VERIFY_TOKEN     # any string you choose
-# in functions .env or at deploy prompt:
+Bulk messages only go to candidates who agreed: they tick the WhatsApp box on Applicant Data, or the admin records consent on their CV. A reply of STOP marks the candidate opted out (`conversations/{id}.optedOut`, `cvs/{id}.waConsent = false`) and CapLynk won't message them again unless consent is recorded again.
+
+1. In Meta Business Suite create a WhatsApp Business account and add a business phone number (a number not already used on the WhatsApp app). In Meta for Developers create an app with the WhatsApp product, and create a System User with a permanent token that has `whatsapp_business_messaging` and `whatsapp_business_management`.
+2. Create a message template named `caplynk_outreach`, category Marketing, language English, with one body variable and fixed text around it, for example: `Hello from Gaplyn Services. {{1}} Reply STOP to stop these messages.` CapLynk puts your message (one paragraph, up to 1,000 characters) into `{{1}}`. Wait for approval.
+3. Set the secrets and params, then deploy the `modules` codebase:
+
+```
+firebase.cmd functions:secrets:set WA_TOKEN          # the permanent token
+firebase.cmd functions:secrets:set WA_APP_SECRET     # App settings > Basic > App secret
+firebase.cmd functions:secrets:set WA_VERIFY_TOKEN   # any string you choose
+# modules/functions/.env (the deploy also asks):
 WA_PHONE_NUMBER_ID=123456789012345
 WA_TEMPLATE=caplynk_outreach
 WA_TEMPLATE_LANG=en
 ```
 
-4. Deploy, then in Meta set the webhook URL to `https://<your-site>/api/whatsapp/webhook`, the verify token to `WA_VERIFY_TOKEN`, and subscribe to `messages`.
-5. In CapLynk Settings choose "WhatsApp Business Cloud API".
+4. In the Meta app's WhatsApp > Configuration set the callback URL to `https://<your-site>/api/whatsapp/webhook`, the verify token to `WA_VERIFY_TOKEN`, and subscribe to `messages`.
 
 ## Capability taxonomy
 
