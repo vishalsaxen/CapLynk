@@ -129,23 +129,27 @@
       c.storagePath = path;
     } catch (e) { console.warn("Original file not stored", e); }
   }
-  // The stored file downloads as itself; CVs uploaded before files were kept fall back to their extracted text.
-  async function downloadCv(c) {
-    if (c.storagePath && fb?.st) {
-      try {
-        const a = document.createElement("a");
-        // Stored with "Content-Disposition: attachment", so the link saves the file instead of leaving this page.
-        a.href = await fb.st.getDownloadURL(fb.st.ref(fb.bucket, c.storagePath));
-        return a.click();
-      } catch (e) { console.error(e); toast("Couldn't fetch the original file. Downloading the extracted text instead."); }
-    }
-    download((c.fileName || candLabel(c)).replace(/\.[a-z0-9]+$/i, "") + ".txt", c.cvText || "");
+  // Each CV downloads twice over: the file exactly as uploaded, and the text CapLynk read out of it.
+  const fileKind = (c) => ({ pdf: "PDF", docx: "Word", doc: "Word", txt: "text", md: "text" })[(c.fileName || "").toLowerCase().split(".").pop()] || "file";
+  async function downloadOriginal(c) {
+    if (!c.storagePath || !fb?.st) return false;
+    try {
+      const a = document.createElement("a");
+      // Stored with "Content-Disposition: attachment", so the link saves the file instead of leaving this page.
+      a.href = await fb.st.getDownloadURL(fb.st.ref(fb.bucket, c.storagePath));
+      a.click(); return true;
+    } catch (e) { console.error(e); toast("Couldn't fetch the original " + (c.fileName || "file") + "."); return false; }
   }
+  const downloadText = (c) => download((c.fileName || candLabel(c)).replace(/\.[a-z0-9]+$/i, "") + ".txt", c.cvText || "");
+  const pause = () => new Promise((ok) => setTimeout(ok, 700));
 
   $("allCvsBtn").onclick = async () => {
     if (!state.candidates.length) return toast("No CVs to download yet.");
-    toast("Downloading " + state.candidates.length + " CVs. If the browser asks, allow multiple downloads.");
-    for (const c of state.candidates) { await downloadCv(c); await new Promise((ok) => setTimeout(ok, 700)); }
+    toast("Downloading " + state.candidates.length + " CVs with their .txt copies. If the browser asks, allow multiple downloads.");
+    for (const c of state.candidates) {
+      if (await downloadOriginal(c)) await pause();
+      downloadText(c); await pause();
+    }
   };
 
   $("cvFiles").onchange = (e) => { addFiles([...e.target.files]); e.target.value = ""; };
@@ -206,7 +210,9 @@
         <div class="row">
           <button class="btn ${c.status === "new" ? "" : "ghost"}" id="parseBtn" type="button">${c.status === "new" ? "Parse CV" : "Parse again"}</button>
           <button class="btn wa" id="waBtn" type="button" ${c.phone ? "" : "disabled title='Add a phone number first'"}>WhatsApp${conv ? (conv.status === "closed" ? " (closed)" : "") : ""}</button>
-          <button class="btn ghost" id="cvDlBtn" type="button" title="${c.storagePath ? "Download the file the candidate uploaded" : "Uploaded before original files were kept: downloads the extracted text"}">Download CV${c.storagePath ? "" : " (.txt)"}</button>
+          ${c.storagePath ? `<button class="btn ghost" id="cvDlBtn" type="button" title="The file exactly as it was uploaded">Download ${fileKind(c)}</button>`
+            : `<label class="btn ghost" for="attachFile" title="This CV arrived before original files were kept. Attach the PDF or Word file to store it with the CV.">Attach original</label><input id="attachFile" type="file" accept=".pdf,.doc,.docx,.txt,.md" hidden>`}
+          <button class="btn ghost" id="txtDlBtn" type="button" title="The text CapLynk read from the CV">Download .txt</button>
           <button class="btn danger" id="delBtn" type="button">Delete</button>
         </div>
       </div>
@@ -234,7 +240,16 @@
     $("addSkillBtn").onclick = () => { c.skills.push({ code: unusedCode(c.skills), level: 3, evidence: "" }); save("candidates", c); renderCandidates(); };
     $("parseBtn").onclick = async () => { $("parseBtn").disabled = true; $("parseBtn").textContent = "Parsing…"; await parseCandidate(c); renderCandidates(); };
     $("waBtn").onclick = () => openChat(c.id);
-    $("cvDlBtn").onclick = () => downloadCv(c);
+    if ($("cvDlBtn")) $("cvDlBtn").onclick = () => downloadOriginal(c);
+    $("txtDlBtn").onclick = () => downloadText(c);
+    if ($("attachFile")) $("attachFile").onchange = async (e) => {
+      const f = e.target.files[0]; e.target.value = "";
+      if (!f) return;
+      await storeOriginal(c, f);
+      if (!c.storagePath) return toast("Couldn't store " + f.name + ". Check that Firebase Storage is set up.");
+      c.originalAttachedAt = now();
+      await save("candidates", c); renderCandidates(); toast(f.name + " is now stored with this CV.");
+    };
     $("delBtn").onclick = async () => { if (!confirm("Delete " + candLabel(c) + " and their WhatsApp history?")) return; await remove("candidates", c.id);
       if (c.storagePath && fb?.st) fb.st.deleteObject(fb.st.ref(fb.bucket, c.storagePath)).catch(console.error); if (conv) await remove("conversations", c.id); state.candId = state.candidates[0]?.id || null; render(); };
     if (dup) $("dupLink").onclick = (e) => { e.preventDefault(); state.candId = dup.id; renderCandidates(); };
