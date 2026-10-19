@@ -112,6 +112,7 @@
         if (!text) { toast(f.name + " has no readable text (scanned image?)"); continue; }
         const c = { id: uid(), status: "new", fileName: f.name, cvText: text.slice(0, 60000), addedAt: now(), name: "", skills: [],
           ownerUid: fb?.user?.uid || "", ownerEmail: fb?.user?.email || "", ownerName: "Uploaded by admin" };
+        await storeOriginal(c, f);
         await save("candidates", c); added++;
         if (!state.candId) state.candId = c.id;
       } catch (e) { toast(e.message || "Couldn't read " + f.name); }
@@ -119,6 +120,34 @@
     if (added) toast(added + (added === 1 ? " CV added. Parse it when you're ready." : " CVs added. Parse them when you're ready."));
     render();
   }
+  // ---------- original CV files (Firebase Storage: cvs/{ownerUid}/{cvId}/{fileName}) ----------
+  async function storeOriginal(c, file) {
+    if (!LIVE || !fb?.st) return;
+    const path = "cvs/" + fb.user.uid + "/" + c.id + "/" + file.name.replace(/[^\w.\- ]+/g, "_");
+    try {
+      await fb.st.uploadBytes(fb.st.ref(fb.bucket, path), file, { contentType: file.type || "application/octet-stream", contentDisposition: 'attachment; filename="' + file.name.replace(/"/g, "") + '"' });
+      c.storagePath = path;
+    } catch (e) { console.warn("Original file not stored", e); }
+  }
+  // The stored file downloads as itself; CVs uploaded before files were kept fall back to their extracted text.
+  async function downloadCv(c) {
+    if (c.storagePath && fb?.st) {
+      try {
+        const a = document.createElement("a");
+        // Stored with "Content-Disposition: attachment", so the link saves the file instead of leaving this page.
+        a.href = await fb.st.getDownloadURL(fb.st.ref(fb.bucket, c.storagePath));
+        return a.click();
+      } catch (e) { console.error(e); toast("Couldn't fetch the original file. Downloading the extracted text instead."); }
+    }
+    download((c.fileName || candLabel(c)).replace(/\.[a-z0-9]+$/i, "") + ".txt", c.cvText || "");
+  }
+
+  $("allCvsBtn").onclick = async () => {
+    if (!state.candidates.length) return toast("No CVs to download yet.");
+    toast("Downloading " + state.candidates.length + " CVs. If the browser asks, allow multiple downloads.");
+    for (const c of state.candidates) { await downloadCv(c); await new Promise((ok) => setTimeout(ok, 700)); }
+  };
+
   $("cvFiles").onchange = (e) => { addFiles([...e.target.files]); e.target.value = ""; };
   $("candSearch").oninput = (e) => { state.q = e.target.value.toLowerCase(); renderCandidates(); };
 
@@ -177,6 +206,7 @@
         <div class="row">
           <button class="btn ${c.status === "new" ? "" : "ghost"}" id="parseBtn" type="button">${c.status === "new" ? "Parse CV" : "Parse again"}</button>
           <button class="btn wa" id="waBtn" type="button" ${c.phone ? "" : "disabled title='Add a phone number first'"}>WhatsApp${conv ? (conv.status === "closed" ? " (closed)" : "") : ""}</button>
+          <button class="btn ghost" id="cvDlBtn" type="button" title="${c.storagePath ? "Download the file the candidate uploaded" : "Uploaded before original files were kept: downloads the extracted text"}">Download CV${c.storagePath ? "" : " (.txt)"}</button>
           <button class="btn danger" id="delBtn" type="button">Delete</button>
         </div>
       </div>
@@ -204,7 +234,9 @@
     $("addSkillBtn").onclick = () => { c.skills.push({ code: unusedCode(c.skills), level: 3, evidence: "" }); save("candidates", c); renderCandidates(); };
     $("parseBtn").onclick = async () => { $("parseBtn").disabled = true; $("parseBtn").textContent = "Parsing…"; await parseCandidate(c); renderCandidates(); };
     $("waBtn").onclick = () => openChat(c.id);
-    $("delBtn").onclick = async () => { if (!confirm("Delete " + candLabel(c) + " and their WhatsApp history?")) return; await remove("candidates", c.id); if (conv) await remove("conversations", c.id); state.candId = state.candidates[0]?.id || null; render(); };
+    $("cvDlBtn").onclick = () => downloadCv(c);
+    $("delBtn").onclick = async () => { if (!confirm("Delete " + candLabel(c) + " and their WhatsApp history?")) return; await remove("candidates", c.id);
+      if (c.storagePath && fb?.st) fb.st.deleteObject(fb.st.ref(fb.bucket, c.storagePath)).catch(console.error); if (conv) await remove("conversations", c.id); state.candId = state.candidates[0]?.id || null; render(); };
     if (dup) $("dupLink").onclick = (e) => { e.preventDefault(); state.candId = dup.id; renderCandidates(); };
   }
   function field(key, label, val, type = "text") { return `<label class="f">${label}<input data-f="${key}" type="${type}" value="${h(val ?? "")}"></label>`; }
@@ -599,7 +631,8 @@
     const { initializeApp } = await import(sdk + "/firebase-app.js");
     const auth = await import(sdk + "/firebase-auth.js");
     const fs = await import(sdk + "/firebase-firestore.js");
-    const app = initializeApp(cfg); const db = fs.getFirestore(app); const a = auth.getAuth(app);
+    const st = await import(sdk + "/firebase-storage.js");
+    const app = initializeApp(cfg); const db = fs.getFirestore(app); const a = auth.getAuth(app); const bucket = st.getStorage(app);
     const gate = $("gate"), gateErr = (m, kind) => { $("gateMsg").textContent = m || ""; $("gateMsg").className = "gate-msg " + (kind || ""); };
     let unsub = [];
 
@@ -626,7 +659,7 @@
       }
       gate.hidden = !!user; document.body.classList.toggle("locked", !user);
       if (!user) { state.candidates = []; state.roles = []; state.conversations = {}; return; }
-      fb = { db, fs, user };
+      fb = { db, fs, user, st, bucket };
       $("whoami").textContent = user.email;
       const keepTyping = () => document.activeElement && ["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement.tagName) && !document.activeElement.closest("dialog");
       // CVs are live: a candidate's upload shows up here without a refresh.

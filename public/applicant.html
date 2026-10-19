@@ -101,7 +101,8 @@ if (!cfg.apiKey) {
   const { initializeApp } = await import(sdk + "/firebase-app.js");
   const auth = await import(sdk + "/firebase-auth.js");
   const fs = await import(sdk + "/firebase-firestore.js");
-  const app = initializeApp(cfg), a = auth.getAuth(app), db = fs.getFirestore(app);
+  const st = await import(sdk + "/firebase-storage.js");
+  const app = initializeApp(cfg), a = auth.getAuth(app), db = fs.getFirestore(app), bucket = st.getStorage(app);
   let user = null, mine = [];
   $("signOut").onclick = () => auth.signOut(a);
 
@@ -116,7 +117,11 @@ if (!cfg.apiKey) {
       const c = mine.find((x) => x.id === b.dataset.del);
       if (!confirm("Remove " + c.fileName + "?")) return;
       b.disabled = true;
-      try { await fs.deleteDoc(fs.doc(db, "cvs", c.id)); mine = mine.filter((x) => x.id !== c.id); render(); }
+      try {
+        await fs.deleteDoc(fs.doc(db, "cvs", c.id));
+        if (c.storagePath) await st.deleteObject(st.ref(bucket, c.storagePath)).catch(() => {});
+        mine = mine.filter((x) => x.id !== c.id); render();
+      }
       catch { b.disabled = false; status("Couldn't remove it. It may already be under review.", true); }
     }));
   }
@@ -132,6 +137,11 @@ if (!cfg.apiKey) {
         id: crypto.randomUUID(), status: "new", fileName: file.name, cvText: text.slice(0, 60000), addedAt: new Date().toISOString(),
         ownerUid: user.uid, ownerEmail: user.email || "", ownerName: user.displayName || "", name: "", skills: [],
       };
+      // Keep the original file too, so the CapLynk team can download the CV exactly as it was sent.
+      status("Uploading " + file.name + "…");
+      const path = "cvs/" + user.uid + "/" + c.id + "/" + file.name.replace(/[^\w.\- ]+/g, "_");
+      try { await st.uploadBytes(st.ref(bucket, path), file, { contentType: file.type || "application/octet-stream", contentDisposition: 'attachment; filename="' + file.name.replace(/"/g, "") + '"' }); c.storagePath = path; }
+      catch (e) { console.warn("Original file not stored", e); }
       await fs.setDoc(fs.doc(db, "cvs", c.id), c);
       mine.push(c); render();
       status("Thanks, " + file.name + " is uploaded. We'll be in touch on WhatsApp.");

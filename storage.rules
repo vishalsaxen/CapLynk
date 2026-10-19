@@ -1,0 +1,23 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // The one Super Admin account (admin.html), same as firestore.rules.
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email == 'vaani.s@gaplyn.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    // Original CV files: cvs/{ownerUid}/{cvId}/{fileName}.
+    // The owner uploads and can remove their own; the Super Admin can read and remove all of them.
+    match /cvs/{uid}/{cvId}/{fileName} {
+      allow read: if isAdmin() || (request.auth != null && request.auth.uid == uid);
+      allow create: if request.auth != null && request.auth.uid == uid
+        && (request.auth.token.email_verified == true || isAdmin())
+        && request.resource.size < 10 * 1024 * 1024;
+      allow delete: if isAdmin() || (request.auth != null && request.auth.uid == uid);
+    }
+
+    match /{allPaths=**} { allow read, write: if false; }
+  }
+}
