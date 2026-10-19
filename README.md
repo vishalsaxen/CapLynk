@@ -15,13 +15,14 @@ public/firebase-config.js  Your Firebase web config (shared by all pages)
 functions/index.js     Cloud Function that calls the Claude API and streams the reply
 firebase.json          Hosting + Functions + Firestore config
 firestore.rules        Who can read and write what (see below)
+storage.rules          Original CV files in Firebase Storage: the owner and the Super Admin only
 ```
 
 ## Accounts
 
 The public site is for candidates only. They create an account with email and password and must open the verification link before they can sign in (Google accounts are already verified). Sign-up writes `users/{uid}` with `name`, `email` and `role: "candidate"`.
 
-CVs a candidate uploads go to the top-level `cvs` collection with their `ownerUid`. A candidate can read and add only their own, and can remove one until it has been reviewed.
+CVs a candidate uploads go to the top-level `cvs` collection with their `ownerUid`. The original PDF or Word file is kept in Firebase Storage at `cvs/{ownerUid}/{cvId}/{fileName}` (up to 10 MB), and the Super Admin can download it from admin.html. A candidate can read and add only their own, and can remove one until it has been reviewed.
 
 The Super Admin is the single account `vaani.s@gaplyn.com`, signing in at `/admin.html`. Its password is kept in Firebase Authentication (create the user under Authentication → Users → Add user), never in page code, because this repository is public. The first sign-in emails a one-time verification link to that address. Only that verified account can read every CV and the `roles` and `conversations` collections, and only it can call Claude parsing.
 

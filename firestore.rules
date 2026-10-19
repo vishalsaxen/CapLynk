@@ -27,7 +27,8 @@ service cloud.firestore {
         && request.auth.token.email_verified == true
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.status == 'new'
-        && request.resource.data.keys().hasOnly(['id', 'status', 'fileName', 'cvText', 'addedAt', 'ownerUid', 'ownerEmail', 'ownerName', 'name', 'skills'])
+        && request.resource.data.keys().hasOnly(['id', 'status', 'fileName', 'cvText', 'addedAt', 'ownerUid', 'ownerEmail', 'ownerName', 'name', 'skills', 'storagePath'])
+        && (!('storagePath' in request.resource.data) || request.resource.data.storagePath.matches('cvs/' + request.auth.uid + '/' + id + '/.+'))
         && request.resource.data.cvText is string && request.resource.data.cvText.size() <= 60000
       );
       allow update: if isAdmin();
