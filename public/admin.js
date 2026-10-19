@@ -1,6 +1,7 @@
 // CapLynk Super Admin workspace.
 // CVs: every CV candidates upload on applicant.html (top-level cvs/), parsed here (Claude via /api/profiles, or the offline heuristics).
-// WhatsApp: wa.me click-to-chat, with each conversation kept as a log that downloads as .txt.
+// WhatsApp: Business Cloud API when it's set up (single and bulk sends, replies via webhook), otherwise wa.me click-to-chat;
+//   each conversation is kept as a log that downloads as .txt. Bulk sends go only to candidates who agreed to WhatsApp messages.
 // Tracker: per-candidate conversation with status, next step, due date, and close/reopen.
 // Roles: skill profiles from the CapLynk Capability Taxonomy, ranked matches, and a printable client summary card.
 // Taxonomy: imported from Gaplyn's Excel workbook in Settings and kept in Firestore taxonomy/{meta,skills,roles}.
@@ -163,7 +164,7 @@
     const valid = (p.skills || []).filter((s) => S.BY_CODE[s.code]).map((s) => ({ code: s.code, level: clampLevel(s.level), evidence: s.evidence || "" }));
     Object.assign(c, {
       // The name a candidate signed up with beats the offline parser's guess; Claude reads the CV properly.
-      name: (by === "claude" ? p.name || accountName(c) : accountName(c) || p.name) || c.name || "", email: p.email || c.email || accountEmail(c), phone: p.phone || "", location: p.location || "",
+      name: (by === "claude" ? p.name || accountName(c) : accountName(c) || p.name) || c.name || "", email: p.email || c.email || accountEmail(c), phone: p.phone || c.waPhone || "", location: p.location || "",
       linkedin: p.linkedin || "", headline: p.headline || "", yearsExperience: p.yearsExperience ?? null,
       summary: p.summary || c.summary || "", skills: valid, status: "parsed", parsedAt: now(), parsedBy: by,
     });
@@ -210,13 +211,15 @@
         <div><h1>${h(candLabel(c))}</h1><div class="sub">${h(c.fileName || "")}${c.ownerEmail && accountEmail(c) ? " · uploaded by " + h(accountEmail(c)) + " " + fmtTime(c.addedAt) : ""}${c.parsedBy ? " · parsed " + (c.parsedBy === "claude" ? "by Claude" : "by built-in parser") + " " + fmtTime(c.parsedAt) : ""}</div></div>
         <div class="row">
           <button class="btn ${c.status === "new" ? "" : "ghost"}" id="parseBtn" type="button">${c.status === "new" ? "Parse CV" : "Parse again"}</button>
-          <button class="btn wa" id="waBtn" type="button" ${c.phone ? "" : "disabled title='Add a phone number first'"}>WhatsApp${conv ? (conv.status === "closed" ? " (closed)" : "") : ""}</button>
+          <button class="btn wa" id="waBtn" type="button" ${c.phone || c.waPhone ? "" : "disabled title='Add a phone number first'"}>WhatsApp${conv ? (conv.status === "closed" ? " (closed)" : "") : ""}</button>
           ${c.storagePath ? `<button class="btn ghost" id="cvDlBtn" type="button" title="The file exactly as it was uploaded">Download ${fileKind(c)}</button>`
             : `<label class="btn ghost" for="attachFile" title="This CV arrived before original files were kept. Attach the PDF or Word file to store it with the CV.">Attach original</label><input id="attachFile" type="file" accept=".pdf,.doc,.docx,.txt,.md" hidden>`}
           <button class="btn ghost" id="txtDlBtn" type="button" title="The text CapLynk read from the CV">Download .txt</button>
           <button class="btn danger" id="delBtn" type="button">Delete</button>
         </div>
       </div>
+      <div class="row" style="margin:-4px 0 12px">${consentChip(c)}
+        <button class="btn ghost sm" id="consentBtn" type="button">${c.waConsent ? "Remove WhatsApp consent" : "Record WhatsApp consent"}</button></div>
       ${c.status === "new" ? '<div class="warn">Not parsed yet. Parse to fill in contact details and skills, or type them in yourself.</div>' : ""}
       ${oldSkills(c.skills) ? '<div class="warn">This profile still uses old SFIA skills. Click Parse again to rebuild it on the CapLynk Capability Taxonomy.</div>' : ""}
       ${dup ? `<div class="warn">Possible duplicate of <a href="#" id="dupLink">${h(candLabel(dup))}</a> (same email or phone).</div>` : ""}
@@ -242,6 +245,15 @@
     $("addSkillBtn").onclick = () => { c.skills.push({ code: unusedCode(c.skills), level: 3, evidence: "" }); save("candidates", c); renderCandidates(); };
     $("parseBtn").onclick = async () => { $("parseBtn").disabled = true; $("parseBtn").textContent = "Parsing…"; await parseCandidate(c); renderCandidates(); };
     $("waBtn").onclick = () => openChat(c.id);
+    $("consentBtn").onclick = () => {
+      if (c.waConsent) { c.waConsent = false; c.waConsentAt = ""; }
+      else {
+        if (!confirm("Only record consent if " + candLabel(c) + " has agreed to WhatsApp messages from Gaplyn Services, in writing or on a call. Record it now?")) return;
+        c.waConsent = true; c.waConsentAt = now(); c.waConsentBy = "admin"; delete c.waOptOutAt;
+        const conv = state.conversations[c.id]; if (conv?.optedOut) { conv.optedOut = false; save("conversations", conv); }
+      }
+      save("candidates", c); renderCandidates();
+    };
     if ($("cvDlBtn")) $("cvDlBtn").onclick = () => downloadOriginal(c);
     $("txtDlBtn").onclick = () => downloadText(c);
     if ($("attachFile")) $("attachFile").onchange = async (e) => {
@@ -255,6 +267,11 @@
     $("delBtn").onclick = async () => { if (!confirm("Delete " + candLabel(c) + " and their WhatsApp history?")) return; await remove("candidates", c.id);
       if (c.storagePath && fb?.st) fb.st.deleteObject(fb.st.ref(fb.bucket, c.storagePath)).catch(console.error); if (conv) await remove("conversations", c.id); state.candId = state.candidates[0]?.id || null; render(); };
     if (dup) $("dupLink").onclick = (e) => { e.preventDefault(); state.candId = dup.id; renderCandidates(); };
+  }
+  function consentChip(c) {
+    if (state.conversations[c.id]?.optedOut || (c.waOptOutAt && !c.waConsent)) return '<span class="chip magenta">WhatsApp: opted out</span>';
+    if (c.waConsent) return `<span class="chip green" title="${c.waConsentBy === "admin" ? "Recorded by the admin" : "Ticked on Applicant Data"} ${h(fmtTime(c.waConsentAt))}">WhatsApp: agreed</span>`;
+    return '<span class="chip amber" title="Bulk messages skip this candidate">WhatsApp: no consent yet</span>';
   }
   function field(key, label, val, type = "text") { return `<label class="f">${label}<input data-f="${key}" type="${type}" value="${h(val ?? "")}"></label>`; }
   const clampLevel = (v) => Math.max(1, Math.min(S.LEVELS.length - 1 || 6, +v || 3));
@@ -361,7 +378,7 @@
     if (!conv || !c) { $("chatDetail").innerHTML = `<div class="empty"><h3>WhatsApp tracker</h3><p>Every message you send to a candidate lands here with its replies, a next step and a due date. Close a chat when it's no longer needed; closed chats can't be messaged until you reopen them.</p></div>`; return; }
     if (conv.unread) { conv.unread = false; save("conversations", conv); renderUnread(); }
 
-    const phone = S.toE164Digits(c.phone, settings.cc);
+    const phone = S.toE164Digits(c.phone || c.waPhone, settings.cc);
     const closed = conv.status === "closed";
     const [label, tone] = convState(conv);
     const role = state.roles.find((r) => r.id === conv.roleId);
@@ -466,6 +483,7 @@
     const text = $("msgText").value.trim();
     if (!text) return toast("Write a message first.");
     if (conv.status === "closed") return toast("This chat is closed. Reopen it to send.");
+    if (conv.optedOut) return toast(first(c.name) + " replied STOP, so CapLynk won't message them. Record consent again on their CV if they opt back in.");
     const btn = $("sendBtn"); btn.disabled = true;
     const lastIn = [...conv.messages].reverse().find((m) => m.dir === "in");
     const inWindow = lastIn && Date.now() - new Date(lastIn.at).getTime() < 24 * 3600e3;
@@ -483,6 +501,81 @@
     conv.messages.push({ id: uid(), dir: "out", text, at: now(), via: "link", status: "opened in WhatsApp" }); conv.lastAt = now();
     await save("conversations", conv); renderChats();
   }
+
+  // ---------- bulk WhatsApp (Business API only, consented candidates only) ----------
+  const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+  function bulkBlock(c) {
+    const conv = state.conversations[c.id];
+    if (!S.toE164Digits(c.phone || c.waPhone, settings.cc)) return "no phone number";
+    if (conv?.optedOut || (c.waOptOutAt && !c.waConsent)) return "opted out";
+    if (!c.waConsent) return "no WhatsApp consent";
+    if (conv?.status === "closed") return "chat closed";
+    return "";
+  }
+  function fillMessage(raw, c, role) {
+    return raw.replace(/\{first\}/g, first(c.name)).replace(/\{sender\}/g, settings.sender || "the CapLynk team at Gaplyn Services")
+      .replace(/\{a_role\}/g, role ? (/^[aeiou]/i.test(role.title) ? "an " : "a ") + role.title : "a new")
+      .replace(/\{role\}/g, role ? role.title : "the role");
+  }
+  let bulkPick = new Set(), bulkBusy = false;
+  function openBulk({ ids = [], roleId = "" } = {}) {
+    bulkPick = new Set(ids.filter((id) => { const c = state.candidates.find((x) => x.id === id); return c && !bulkBlock(c); }));
+    $("bulkTpl").innerHTML = '<option value="">Write your own…</option>' + TEMPLATES.filter(([k]) => k !== "close").map(([k, n]) => `<option value="${k}">${n}</option>`).join("");
+    $("bulkRole").innerHTML = '<option value="">No role</option>' + state.roles.map((r) => `<option value="${r.id}" ${r.id === roleId ? "selected" : ""}>${h(r.title)}${r.client ? " · " + h(r.client) : ""}</option>`).join("");
+    if (!$("bulkText").value) { $("bulkTpl").value = "intro"; $("bulkTpl").onchange(); }
+    $("bulkProgress").textContent = "";
+    $("bulkNote").hidden = settings.waMode === "api";
+    $("bulkNote").textContent = LIVE ? "Bulk sending needs the WhatsApp Business API, which isn't set up yet. You can still pick recipients and draft the message; until then, message candidates one at a time from their CV." : "Preview mode: bulk sending works once CapLynk is live with the WhatsApp Business API.";
+    renderBulk(); $("bulkDlg").showModal();
+  }
+  function renderBulk() {
+    const roleId = $("bulkRole").value;
+    const role = state.roles.find((r) => r.id === roleId);
+    const people = [...state.candidates].sort((a, b) => (+!!bulkBlock(a) - +!!bulkBlock(b)) || (role?.shortlist?.includes(b.id) - role?.shortlist?.includes(a.id)) || candLabel(a).localeCompare(candLabel(b)));
+    $("bulkList").innerHTML = people.length ? people.map((c) => {
+      const why = bulkBlock(c);
+      return `<li><label class="${why ? "off" : ""}"><input type="checkbox" data-bulk="${c.id}" ${bulkPick.has(c.id) ? "checked" : ""} ${why ? "disabled" : ""}>
+        <span><strong>${h(candLabel(c))}</strong> <span class="muted">${h([c.headline, why ? "" : "+" + S.toE164Digits(c.phone || c.waPhone, settings.cc)].filter(Boolean).join(" · "))}</span></span>
+        ${why ? `<span class="chip ${why === "opted out" ? "magenta" : "amber"}">${why}</span>` : role?.shortlist?.includes(c.id) ? '<span class="chip green">shortlisted</span>' : ""}</label></li>`;
+    }).join("") : '<li class="muted" style="padding:12px">No candidates yet.</li>';
+    $("bulkList").querySelectorAll("[data-bulk]").forEach((el) => (el.onchange = () => { el.checked ? bulkPick.add(el.dataset.bulk) : bulkPick.delete(el.dataset.bulk); bulkCount(); }));
+    bulkCount();
+  }
+  function bulkCount() {
+    const n = bulkPick.size, eligible = state.candidates.filter((c) => !bulkBlock(c)).length;
+    $("bulkCount").textContent = `${n} selected · ${eligible} of ${state.candidates.length} can receive bulk messages`;
+    $("bulkSendBtn").textContent = n ? `Send to ${n}` : "Send";
+    $("bulkSendBtn").disabled = !n || bulkBusy || settings.waMode !== "api";
+  }
+  $("bulkBtn").onclick = () => openBulk();
+  $("closeBulkBtn").onclick = () => { if (!bulkBusy) $("bulkDlg").close(); };
+  $("bulkDlg").oncancel = (e) => { if (bulkBusy) e.preventDefault(); };
+  $("bulkRole").onchange = () => renderBulk();
+  $("bulkTpl").onchange = () => {
+    const t = TEMPLATES.find(([k]) => k === $("bulkTpl").value); if (!t) return;
+    $("bulkText").value = t[2].replace(/\n[\s\S]*$/, "").replace(/\{sender\}/g, settings.sender || "the CapLynk team at Gaplyn Services");
+  };
+  $("bulkAllBtn").onclick = () => { state.candidates.forEach((c) => { if (!bulkBlock(c)) bulkPick.add(c.id); }); renderBulk(); };
+  $("bulkSendBtn").onclick = async () => {
+    const raw = $("bulkText").value.trim();
+    if (!raw) return toast("Write the message first.");
+    const role = state.roles.find((r) => r.id === $("bulkRole").value);
+    const targets = state.candidates.filter((c) => bulkPick.has(c.id) && !bulkBlock(c));
+    if (!confirm(`Send this WhatsApp message to ${targets.length} candidate${targets.length === 1 ? "" : "s"}? Each is sent through your approved template and logged in the tracker.`)) return;
+    bulkBusy = true; bulkCount();
+    let sent = 0; const failed = [];
+    for (const c of targets) {
+      $("bulkProgress").textContent = `Sending ${sent + failed.length + 1} of ${targets.length}…`;
+      try {
+        await api("/api/whatsapp/send", { candidateId: c.id, to: S.toE164Digits(c.phone || c.waPhone, settings.cc), text: fillMessage(raw, c, role), useTemplate: true, roleId: role?.id || "" });
+        sent++; bulkPick.delete(c.id);
+      } catch (e) { failed.push(candLabel(c) + ": " + String(e.message || "error").slice(0, 120)); }
+      await sleep(250); // stays well inside WhatsApp's per-second limit
+    }
+    bulkBusy = false; renderBulk();
+    $("bulkProgress").textContent = `Sent ${sent} of ${targets.length}.` + (failed.length ? " Not sent: " + failed.join("; ") : "");
+    toast(failed.length ? `Sent ${sent}, ${failed.length} failed. See the list in the dialog.` : `Sent to ${sent} candidate${sent === 1 ? "" : "s"}. Replies will appear in the WhatsApp tab.`);
+  };
 
   // =====================================================================
   // M4: role skill profiles, matching, and the client summary card
@@ -507,7 +600,7 @@
     const ranked = parsed.map((c) => ({ c, m: S.match(c, r) })).sort((a, b) => b.m.score - a.m.score);
     $("roleDetail").innerHTML = `
       <div class="title-row"><div><h1>${h(r.title)}</h1><div class="sub">${h([r.client, r.location].filter(Boolean).join(" · "))}</div></div>
-        <div class="row"><button class="btn" id="presentBtn" type="button" ${r.shortlist.length ? "" : "disabled"}>Present ${r.shortlist.length || ""} to client</button><button class="btn danger" id="delRoleBtn" type="button">Delete role</button></div></div>
+        <div class="row"><button class="btn wa" id="bulkRoleBtn" type="button" ${r.shortlist.length ? "" : "disabled title='Shortlist candidates first'"}>WhatsApp shortlist</button><button class="btn" id="presentBtn" type="button" ${r.shortlist.length ? "" : "disabled"}>Present ${r.shortlist.length || ""} to client</button><button class="btn danger" id="delRoleBtn" type="button">Delete role</button></div></div>
       <div class="card"><h3>Role</h3>
         <div class="grid">
           <label class="f">Job title<input data-r="title" value="${h(r.title)}"></label>
@@ -578,6 +671,7 @@
     }));
     $("roleDetail").querySelectorAll("[data-wa]").forEach((b) => (b.onclick = () => { const conv = ensureConv(b.dataset.wa); if (!conv.roleId) conv.roleId = r.id; openChat(b.dataset.wa); }));
     $("presentBtn").onclick = () => openClientCard(r);
+    $("bulkRoleBtn").onclick = () => openBulk({ ids: r.shortlist, roleId: r.id });
     $("delRoleBtn").onclick = async () => { if (!confirm("Delete the role " + r.title + "?")) return; await remove("roles", r.id); state.roleId = state.roles[0]?.id || null; renderRoles(); };
   }
 
@@ -705,6 +799,7 @@
   // ---------- settings ----------
   $("settingsBtn").onclick = () => {
     $("setCc").value = settings.cc; $("setSender").value = settings.sender;
+    $("waModeNote").textContent = settings.waMode === "api" ? "WhatsApp Business API is connected: messages send from CapLynk, replies arrive in the tracker, and bulk sending is on." : "Send opens WhatsApp with the message ready. Paste the candidate's replies in with \"Log their reply\" so the log stays complete. Bulk sending turns on once the WhatsApp Business API is set up.";
     $("storageNote").textContent = LIVE ? "CVs, roles and WhatsApp logs are saved in Firestore, readable only by the Super Admin account." : "Preview mode: data is saved only in this browser.";
     $("settingsDlg").showModal();
   };
@@ -775,6 +870,8 @@
       const rs = await fs.getDocs(fs.collection(db, "roles")).catch(() => null);
       state.roles = rs ? rs.docs.map((d) => d.data()) : []; state.roleId = state.roles[0]?.id || null;
       await loadTaxonomy();
+      // Use the Business API (and allow bulk sends) once its secrets and phone number ID are deployed.
+      api("/api/whatsapp/send", { ping: true }).then((r) => { settings.waMode = r.configured ? "api" : "link"; if (state.tab === "wa") renderChats(); }).catch(() => {});
       unsub.push(fs.onSnapshot(fs.collection(db, "conversations"), (snap) => {
         snap.docChanges().forEach((ch) => { if (ch.type === "removed") delete state.conversations[ch.doc.id]; else state.conversations[ch.doc.id] = ch.doc.data(); });
         if (state.tab === "wa" && !keepTyping()) renderChats(); else renderUnread();

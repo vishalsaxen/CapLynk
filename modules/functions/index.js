@@ -144,17 +144,22 @@ exports.profiles = onRequest({ ...opts, secrets: [ANTHROPIC_API_KEY] }, async (r
 // ---------------------------------------------------------------- WhatsApp
 const digits = (s) => String(s || "").replace(/\D/g, "");
 
+// Super Admin only. Conversations live in top-level conversations/{candidateId} (see firestore.rules).
+// { ping: true } reports whether the Business API is set up, so admin.html can offer bulk sending.
+const waConfigured = () => !!WA_PHONE_NUMBER_ID.value() && !!WA_TOKEN.value() && WA_TOKEN.value() !== "not-set";
 exports.waSend = onRequest({ ...opts, secrets: [WA_TOKEN] }, async (req, res) => {
   if (req.method !== "POST") return res.status(405).send("Use POST");
-  const user = await requireUser(req, res); if (!user) return;
-  const { candidateId, to, text, useTemplate } = req.body || {};
+  const user = await requireAdmin(req, res); if (!user) return;
+  const { candidateId, to, text, useTemplate, roleId, ping } = req.body || {};
+  if (ping) return res.json({ configured: waConfigured() });
   const phone = digits(to);
   if (!candidateId || !phone || !String(text || "").trim()) return res.status(400).send("candidateId, to and text are required");
-  if (!WA_PHONE_NUMBER_ID.value()) return res.status(503).send("WhatsApp Business API is not configured");
+  if (!waConfigured()) return res.status(503).send("WhatsApp Business API is not configured");
 
-  const convRef = db.doc(`users/${user.uid}/conversations/${candidateId}`);
+  const convRef = db.doc(`conversations/${candidateId}`);
   const conv = await convRef.get();
   if (conv.exists && conv.data().status === "closed") return res.status(409).send("This chat is closed");
+  if (conv.exists && conv.data().optedOut) return res.status(409).send("This candidate opted out of WhatsApp");
 
   // Outside WhatsApp's 24-hour service window only approved templates may be sent.
   const body = useTemplate
@@ -170,11 +175,12 @@ exports.waSend = onRequest({ ...opts, secrets: [WA_TOKEN] }, async (req, res) =>
   const at = new Date().toISOString();
   await convRef.set({
     id: candidateId, candidateId, phone, status: "open", lastAt: at, updatedAt: at,
-    ...(conv.exists ? {} : { createdAt: at, nextStep: "", nextStepDue: "", roleId: "" }),
+    ...(conv.exists ? {} : { createdAt: at, nextStep: "", nextStepDue: "", roleId: roleId || "" }),
+    ...(conv.exists && roleId && !conv.data().roleId ? { roleId } : {}),
     messages: FieldValue.arrayUnion({ id: messageId, dir: "out", text: String(text), at, via: "api", status: "sent", template: !!useTemplate }),
   }, { merge: true });
-  // Index by phone so the webhook can file replies under the right recruiter and candidate.
-  await db.doc(`waIndex/${phone}`).set({ uid: user.uid, candidateId, at });
+  // Index by phone so the webhook can file replies under the right candidate.
+  await db.doc(`waIndex/${phone}`).set({ candidateId, at });
   res.json({ messageId });
 });
 
@@ -192,18 +198,21 @@ exports.waWebhook = onRequest({ region: "us-central1", secrets: [WA_APP_SECRET, 
     for (const m of v.messages || []) {
       const idx = await db.doc(`waIndex/${digits(m.from)}`).get();
       if (!idx.exists) { console.warn("Reply from unknown number", m.from); continue; }
-      const { uid, candidateId } = idx.data();
+      const { candidateId } = idx.data();
       const text = m.text?.body || m.button?.text || m.interactive?.button_reply?.title || `[${m.type} message]`;
       const at = new Date(Number(m.timestamp) * 1000 || Date.now()).toISOString();
-      await db.doc(`users/${uid}/conversations/${candidateId}`).set({
-        lastAt: at, updatedAt: at, unread: true,
+      // "STOP" opts the candidate out: bulk sends skip them and single sends are refused.
+      const stop = /^\s*(stop|unsubscribe|opt[ -]?out)\W*$/i.test(text);
+      await db.doc(`conversations/${candidateId}`).set({
+        lastAt: at, updatedAt: at, unread: true, ...(stop ? { optedOut: true, optedOutAt: at } : {}),
         messages: FieldValue.arrayUnion({ id: m.id, dir: "in", text, at, via: "api" }),
       }, { merge: true });
+      if (stop) await db.doc(`cvs/${candidateId}`).set({ waConsent: false, waOptOutAt: at }, { merge: true }).catch(() => {});
     }
     for (const s of v.statuses || []) {
       const idx = await db.doc(`waIndex/${digits(s.recipient_id)}`).get();
       if (!idx.exists) continue;
-      const ref = db.doc(`users/${idx.data().uid}/conversations/${idx.data().candidateId}`);
+      const ref = db.doc(`conversations/${idx.data().candidateId}`);
       await db.runTransaction(async (tx) => {
         const snap = await tx.get(ref); if (!snap.exists) return;
         const messages = (snap.data().messages || []).map((x) => (x.id === s.id ? { ...x, status: s.status } : x));
