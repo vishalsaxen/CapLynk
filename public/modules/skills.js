@@ -1,107 +1,74 @@
-// CapLynk skills engine: SFIA catalogue, CV/JD heuristics, and candidate-to-role matching.
+// CapLynk skills engine: the CapLynk Capability Taxonomy, CV/JD heuristics, and candidate-to-role matching.
 // Pure functions, shared by the browser (window.CapSkills) and Node tests (module.exports).
-// The Cloud Function does the same extraction with Claude; these heuristics are the offline fallback.
+// The taxonomy is Gaplyn's own (Excel workbook, imported on admin.html and kept in Firestore), so it is
+// loaded at runtime with load(); nothing from it is hard-coded here. The Cloud Function does the same
+// extraction with Claude; these heuristics are the offline fallback.
 (function (root) {
-  // A working subset of SFIA 8 skills (code, name, category). Extend freely; codes are the join key.
-  const SFIA = [
-    ["PROG", "Programming/software development", "Development"],
-    ["SWDN", "Software design", "Development"],
-    ["ARCH", "Solution architecture", "Development"],
-    ["TEST", "Testing", "Development"],
-    ["SINT", "Systems integration and build", "Development"],
-    ["RELM", "Release and deployment", "Delivery"],
-    ["CFMG", "Configuration management", "Delivery"],
-    ["DLMG", "Systems development management", "Delivery"],
-    ["DBDS", "Database design", "Data"],
-    ["DBAD", "Database administration", "Data"],
-    ["DATM", "Data management", "Data"],
-    ["DENG", "Data engineering", "Data"],
-    ["DTAN", "Data modelling and design", "Data"],
-    ["DATS", "Data science", "Data"],
-    ["MLNG", "Machine learning", "Data"],
-    ["BINT", "Business intelligence", "Data"],
-    ["VISL", "Data visualisation", "Data"],
-    ["ITOP", "Infrastructure operations", "Infrastructure"],
-    ["SYSP", "System software", "Infrastructure"],
-    ["NTDS", "Network design", "Infrastructure"],
-    ["NTAS", "Network support", "Infrastructure"],
-    ["SCTY", "Information security", "Security"],
-    ["SCAD", "Security operations", "Security"],
-    ["PENT", "Penetration testing", "Security"],
-    ["VUAS", "Vulnerability assessment", "Security"],
-    ["PRMG", "Project management", "Change"],
-    ["PGMG", "Programme management", "Change"],
-    ["BUAN", "Business situation analysis", "Change"],
-    ["REQM", "Requirements definition and management", "Change"],
-    ["BPRE", "Business process improvement", "Change"],
-    ["HCEV", "User experience design", "Design"],
-    ["URCH", "User research", "Design"],
-    ["USUP", "Incident management", "Service"],
-    ["PBMG", "Problem management", "Service"],
-    ["CHMG", "Change control", "Service"],
-    ["SLMO", "Service level management", "Service"],
-    ["RLMT", "Stakeholder relationship management", "Relationships"],
-    ["CNSL", "Consultancy", "Relationships"],
-    ["QUAS", "Quality assurance", "Quality"],
-    ["ITSP", "Strategic planning", "Strategy"],
-    ["GOVN", "Governance", "Strategy"],
-  ].map(([code, name, category]) => ({ code, name, category }));
-  const BY_CODE = Object.fromEntries(SFIA.map((s) => [s.code, s]));
-
-  const LEVELS = ["", "1 Follow", "2 Assist", "3 Apply", "4 Enable", "5 Ensure, advise", "6 Initiate, influence", "7 Set strategy"];
-
-  // Phrases that evidence each SFIA skill in free text (lower case).
-  const KEYWORDS = {
-    PROG: ["python", "java", "javascript", "typescript", "c#", ".net", "c++", "golang", "ruby", "php", "kotlin", "swift", "react", "node.js", "nodejs", "angular", "vue", "django", "spring boot", "rust", "scala", "software developer", "software engineer", "full stack", "backend", "frontend"],
-    SWDN: ["software design", "design patterns", "microservices", "api design", "object-oriented", "system design", "domain-driven"],
-    ARCH: ["solution architect", "solutions architect", "solution architecture", "enterprise architecture", "togaf", "technical architect"],
-    TEST: ["testing", "test automation", "qa automation", "selenium", "cypress", "playwright", "junit", "pytest", "test cases"],
-    SINT: ["ci/cd", "jenkins", "github actions", "gitlab ci", "build pipeline", "systems integration"],
-    RELM: ["release management", "deployment", "devops", "continuous delivery", "helm"],
-    CFMG: ["configuration management", "ansible", "puppet", "chef"],
-    DLMG: ["engineering manager", "development manager", "head of engineering", "delivery manager"],
-    DBDS: ["database design", "schema design", "postgresql", "mysql", "sql server", "mongodb"],
-    DBAD: ["database administration", "dba", "database administrator", "backup and recovery"],
-    DATM: ["data management", "data governance", "master data", "data quality", "data catalogue", "data catalog"],
-    DENG: ["data engineer", "data engineering", "etl", "elt", "spark", "airflow", "kafka", "databricks", "snowflake", "data pipeline", "dbt", "bigquery"],
-    DTAN: ["data modelling", "data modeling", "dimensional model", "erd", "star schema"],
-    DATS: ["data science", "data scientist", "statistics", "statistical", "pandas", "numpy", "r programming"],
-    MLNG: ["machine learning", "deep learning", "tensorflow", "pytorch", "nlp", "llm", "scikit-learn", "computer vision", "generative ai"],
-    BINT: ["business intelligence", "power bi", "tableau", "looker", "qlik", "reporting"],
-    VISL: ["data visualisation", "data visualization", "dashboards", "dashboard", "d3.js"],
-    ITOP: ["aws", "azure", "gcp", "google cloud", "cloud infrastructure", "kubernetes", "docker", "terraform", "sre", "site reliability", "infrastructure"],
-    SYSP: ["linux", "unix", "windows server", "vmware", "operating systems"],
-    NTDS: ["network design", "network architecture", "sd-wan", "routing and switching", "ccnp", "ccie"],
-    NTAS: ["network support", "network engineer", "lan/wan", "ccna", "firewall"],
-    SCTY: ["information security", "cyber security", "cybersecurity", "iso 27001", "security architecture", "cissp", "risk assessment"],
-    SCAD: ["security operations", "soc analyst", "siem", "splunk", "incident response", "sentinel"],
-    PENT: ["penetration testing", "pen testing", "pentest", "ethical hacking", "oscp", "burp suite"],
-    VUAS: ["vulnerability assessment", "vulnerability scanning", "vulnerability management", "nessus", "qualys"],
-    PRMG: ["project manager", "project management", "prince2", "pmp", "project delivery"],
-    PGMG: ["programme manager", "program manager", "programme management", "program management", "msp"],
-    BUAN: ["business analyst", "business analysis", "gap analysis", "as-is", "to-be"],
-    REQM: ["requirements", "user stories", "backlog", "product owner", "acceptance criteria"],
-    BPRE: ["process improvement", "lean", "six sigma", "bpmn", "process mapping"],
-    HCEV: ["ux design", "ui design", "ui/ux", "figma", "interaction design", "user experience", "wireframes", "prototyping"],
-    URCH: ["user research", "usability testing", "user interviews"],
-    USUP: ["incident management", "service desk", "itil", "major incident"],
-    PBMG: ["problem management", "root cause analysis"],
-    CHMG: ["change control", "change advisory board", "cab"],
-    SLMO: ["service level", "sla", "service delivery manager"],
-    RLMT: ["stakeholder management", "stakeholder engagement", "client relationship", "account management"],
-    CNSL: ["consultant", "consultancy", "consulting", "advisory"],
-    QUAS: ["quality assurance", "iso 9001", "quality management", "audit"],
-    ITSP: ["it strategy", "technology strategy", "digital strategy", "roadmap"],
-    GOVN: ["it governance", "cobit", "corporate governance", "governance framework"],
-  };
+  // Filled by load(). Kept as the same objects so callers holding S.SKILLS / S.BY_CODE see the update.
+  const SKILLS = [];          // { code, name, domain, category, type, description, aliases[] }
+  const BY_CODE = {};
+  const ROLES = [];           // { id, name, family, alt[], summary, skills: [{ id, imp, lv: [junior, mid, senior, lead] }] }
+  const LEVELS = [""];        // LEVELS[n] = "Ln Name", n = 1..6
+  const LEVEL_INFO = [];      // [{ level, name, description }]
+  const META = { version: "", title: "", loaded: false };
+  const BANDS = ["Junior", "Mid", "Senior", "Lead"];
+  let PATTERNS = {};
 
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const PATTERNS = Object.fromEntries(
-    Object.entries(KEYWORDS).map(([code, words]) => [
-      code,
-      words.map((w) => ({ w, re: new RegExp("(^|[^a-z0-9+#])" + esc(w) + "($|[^a-z0-9+#])", "g") })),
-    ])
-  );
+  const splitList = (v) => String(v ?? "").split(/;/).map((x) => x.trim()).filter(Boolean);
+  const num = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : 0; };   // "-" means not expected: 0
+
+  // Turns the workbook's sheets ({ sheetName: [[cell, ...], ...] }, header row first) into the taxonomy object.
+  function fromSheets(sheets) {
+    const need = ["Proficiency Levels", "Skills", "Roles", "Role Skill Map"];
+    const missing = need.filter((n) => !sheets[n]);
+    if (missing.length) throw new Error("The workbook is missing the sheet" + (missing.length > 1 ? "s " : " ") + missing.join(", ") + ".");
+    const rows = (n) => {
+      const [hdr, ...rest] = sheets[n];
+      const idx = Object.fromEntries((hdr || []).map((hname, i) => [String(hname ?? "").trim().toLowerCase(), i]));
+      return rest.filter((r) => r && r.some((c) => c !== null && c !== undefined && c !== "")).map((r) => (key) => r[idx[key.toLowerCase()]]);
+    };
+    const about = (sheets.About || []).map((r) => String(r?.[0] ?? ""));
+    const version = (about.join(" ").match(/Version\s+([\w.]+)/i) || [])[1] || "";
+    const levels = rows("Proficiency Levels").map((g) => ({ level: num(String(g("Level")).replace(/\D/g, "")), name: String(g("Name") ?? ""), description: String(g("Description") ?? "") }))
+      .filter((l) => l.level > 0).sort((a, b) => a.level - b.level);
+    const skills = rows("Skills").map((g) => ({
+      code: String(g("Skill ID") ?? "").trim(), name: String(g("Skill") ?? "").trim(), domain: String(g("Domain") ?? ""), category: String(g("Category") ?? ""),
+      type: String(g("Type") ?? ""), description: String(g("Description") ?? ""), aliases: splitList(g("Aliases and keywords")),
+    })).filter((x) => x.code && x.name);
+    const roleSkills = {};
+    for (const g of rows("Role Skill Map")) {
+      const id = String(g("Role ID") ?? "").trim(), skill = String(g("Skill ID") ?? "").trim();
+      if (!id || !skill) continue;
+      (roleSkills[id] ||= []).push({ id: skill, imp: String(g("Importance") ?? ""), lv: [g("Junior level"), g("Mid level"), g("Senior level"), g("Lead level")].map(num) });
+    }
+    const roles = rows("Roles").map((g) => {
+      const id = String(g("Role ID") ?? "").trim();
+      return { id, name: String(g("Role") ?? "").trim(), family: String(g("Role family") ?? ""), alt: splitList(g("Alternate titles")), summary: String(g("Summary") ?? ""), skills: roleSkills[id] || [] };
+    }).filter((r) => r.id && r.name);
+    if (!skills.length) throw new Error("No skills found on the Skills sheet.");
+    if (levels.length < 2) throw new Error("No proficiency levels found on the Proficiency Levels sheet.");
+    return { title: about[0] || "CapLynk Capability Taxonomy", version, levels, skills, roles };
+  }
+
+  // Phrases that evidence a skill in free text: its name plus its aliases. Two-letter aliases ("ID", "QA")
+  // match too much ordinary text, so they are left out.
+  function keywordsFor(s) {
+    return [...new Set([s.name, ...s.aliases].map((w) => w.toLowerCase().trim()).filter((w) => w.length >= 3))];
+  }
+
+  function load(tax) {
+    SKILLS.splice(0, SKILLS.length, ...(tax?.skills || []));
+    for (const k of Object.keys(BY_CODE)) delete BY_CODE[k];
+    for (const s of SKILLS) BY_CODE[s.code] = s;
+    ROLES.splice(0, ROLES.length, ...(tax?.roles || []));
+    LEVEL_INFO.splice(0, LEVEL_INFO.length, ...(tax?.levels || []));
+    LEVELS.splice(0, LEVELS.length, "", ...LEVEL_INFO.map((l) => "L" + l.level + " " + l.name));
+    Object.assign(META, { version: tax?.version || "", title: tax?.title || "", loaded: SKILLS.length > 0 });
+    PATTERNS = Object.fromEntries(SKILLS.map((s) => [s.code, keywordsFor(s).map((w) => ({ w, re: new RegExp("(^|[^a-z0-9+#])" + esc(w) + "($|[^a-z0-9+#])", "g") }))]));
+    return META;
+  }
+  const maxLevel = () => Math.max(1, LEVELS.length - 1);
 
   function findSkills(text) {
     const t = " " + String(text || "").toLowerCase() + " ";
@@ -122,18 +89,20 @@
     return m.length ? Math.min(Math.max(...m), 45) : null;
   }
 
-  // An overall SFIA level from seniority words and years; per-skill levels start here and the recruiter adjusts.
-  function seniorityLevel(text, years) {
+  // Seniority band from title words and years, using the taxonomy's bands: Junior 0-2 years, Mid 3-5, Senior 6-9, Lead 10+.
+  function seniorityBand(text, years) {
     const t = String(text || "").toLowerCase();
-    let byTitle = 0;
-    if (/\b(junior|graduate|trainee|intern)\b/.test(t)) byTitle = 2;
-    if (/\bsenior\b/.test(t)) byTitle = 4;
-    if (/\b(lead|principal|staff|architect|manager)\b/.test(t)) byTitle = 5;
-    if (/\b(head of|director|chief|cto|cio|vp)\b/.test(t)) byTitle = 6;
-    const y = years ?? 0;
-    const byYears = y >= 15 ? 6 : y >= 10 ? 5 : y >= 6 ? 4 : y >= 2 ? 3 : y > 0 ? 2 : 3;
-    return Math.min(7, Math.max(byTitle, byYears));
+    let byTitle = -1;
+    if (/\b(junior|graduate|trainee|intern|associate|fresher|entry[- ]level)\b/.test(t)) byTitle = 0;
+    if (/\bsenior\b|\bsr\.?\s/.test(t)) byTitle = 2;
+    if (/\b(lead|principal|staff|head of|director|chief|vp)\b/.test(t)) byTitle = Math.max(byTitle, 3);
+    const y = years ?? null;
+    const byYears = y === null ? 1 : y >= 10 ? 3 : y >= 6 ? 2 : y >= 3 ? 1 : 0;
+    return byTitle >= 0 ? Math.max(byTitle, y === null ? byTitle : byYears) : byYears;
   }
+  // A starting proficiency level for a candidate (Junior L2, Mid L3, Senior L4, Lead L5); the recruiter adjusts.
+  // Matches the workbook's Role Skill Map, where Core skills sit at L3 Junior, L4 Mid, L5 Senior and L5 Lead.
+  function seniorityLevel(text, years) { return Math.min(maxLevel(), [3, 4, 5, 5][seniorityBand(text, years)]); }
 
   const NOT_NAME = /(curriculum|vitae|resume|résumé|profile|contact|address|phone|email|mobile|linkedin|summary|objective|page \d)/i;
   // CV section headings ("Core Skills", "Work Experience") look like names to a naive parser.
@@ -198,19 +167,46 @@
     const level = seniorityLevel(headline + " " + raw.slice(0, 1500), years);
     const skills = findSkills(raw).slice(0, 12).map((s) => ({
       code: s.code,
-      level: Math.max(1, Math.min(7, level - (s.hits === 1 ? 1 : 0))),
+      level: Math.max(1, Math.min(maxLevel(), level - (s.hits === 1 ? 1 : 0))),
       evidence: s.evidence.join(", "),
     }));
     return { name, email, phone, linkedin, location, headline, yearsExperience: years, skills, summary: "" };
   }
 
-  // Required skills from a job description: strongest-evidenced skills, must-have when stated as required.
-  function parseJobText(text) {
+  // The taxonomy role a job title or description names, by role name or alternate title (longest match wins).
+  function findRole(text) {
+    const t = " " + String(text || "").toLowerCase().replace(/\s+/g, " ") + " ";
+    let best = null, bestLen = 0;
+    for (const r of ROLES) {
+      for (const title of [r.name, ...r.alt]) {
+        const w = title.toLowerCase().trim();
+        if (w.length < 4 || w.length <= bestLen) continue;
+        if (new RegExp("(^|[^a-z0-9])" + esc(w) + "($|[^a-z0-9])").test(t)) { best = r; bestLen = w.length; }
+      }
+    }
+    return best;
+  }
+  // A role's skill profile at one band (0 Junior .. 3 Lead): Core skills are must-haves; skills not expected at the band are left out.
+  function roleProfile(role, band) {
+    return (role?.skills || []).filter((x) => BY_CODE[x.id] && x.lv[band] > 0)
+      .map((x) => ({ code: x.id, minLevel: Math.min(maxLevel(), x.lv[band]), mustHave: x.imp === "Core" }));
+  }
+
+  // Required skills from a job description. When the title or text names a taxonomy role, its mapped skills
+  // at the right band come first; skills the JD mentions beyond those are added at the JD's level.
+  function parseJobText(text, title) {
     const raw = String(text || "");
-    const level = seniorityLevel(raw.slice(0, 600), yearsOfExperience(raw));
+    const years = yearsOfExperience(raw);
+    const band = seniorityBand((title || "") + " " + raw.slice(0, 600), years);
+    const role = findRole(title || "") || findRole(raw.slice(0, 400));
+    const fromRole = roleProfile(role, band);
+    const have = new Set(fromRole.map((s) => s.code));
     const reqBlock = (raw.match(/(?:essential|required|must have|requirements)[\s\S]{0,1200}?(?:\n\s*\n|desirable|nice to have|$)/i) || [""])[0];
     const essential = new Set(findSkills(reqBlock).map((s) => s.code));
-    return findSkills(raw).slice(0, 8).map((s) => ({ code: s.code, minLevel: level, mustHave: essential.has(s.code) }));
+    const level = Math.min(maxLevel(), band + 2);
+    const extra = findSkills(raw).filter((s) => !have.has(s.code)).slice(0, role ? 4 : 10)
+      .map((s) => ({ code: s.code, minLevel: level, mustHave: essential.has(s.code) }));
+    return Object.assign([...fromRole, ...extra], { role: role ? { id: role.id, name: role.name } : null, band: BANDS[band] });
   }
 
   // Score 0-100: each required skill earns credit up to its minimum level; must-haves count double.
@@ -239,7 +235,7 @@
     return d;
   }
 
-  const api = { SFIA, BY_CODE, LEVELS, KEYWORDS, findSkills, parseCvText, parseJobText, match, yearsOfExperience, seniorityLevel, toE164Digits };
+  const api = { SKILLS, BY_CODE, ROLES, LEVELS, LEVEL_INFO, META, BANDS, fromSheets, load, findSkills, findRole, roleProfile, parseCvText, parseJobText, match, yearsOfExperience, seniorityBand, seniorityLevel, toE164Digits };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.CapSkills = api;
 })(typeof window !== "undefined" ? window : globalThis);

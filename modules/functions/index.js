@@ -1,5 +1,5 @@
 // CapLynk recruiter backend (modules 1-4), deployed as its own Functions codebase ("modules").
-//   profiles   POST /api/profiles          Claude: CV -> contact details + SFIA profile, JD -> required skills, client summary
+//   profiles   POST /api/profiles          Claude: CV -> contact details + taxonomy skill profile, JD -> required skills, client summary
 //   waSend     POST /api/whatsapp/send     WhatsApp Business Cloud API send, stored in the candidate's conversation
 //   waWebhook  GET/POST /api/whatsapp/webhook  Meta webhook: candidate replies and delivery receipts
 // Secrets live in Secret Manager; nothing here is exposed to the browser.
@@ -42,12 +42,27 @@ async function requireAdmin(req, res) {
 }
 
 // ---------------------------------------------------------------- profiles
-const SFIA_CODES = "PROG Programming/software development; SWDN Software design; ARCH Solution architecture; TEST Testing; SINT Systems integration and build; RELM Release and deployment; CFMG Configuration management; DLMG Systems development management; DBDS Database design; DBAD Database administration; DATM Data management; DENG Data engineering; DTAN Data modelling and design; DATS Data science; MLNG Machine learning; BINT Business intelligence; VISL Data visualisation; ITOP Infrastructure operations; SYSP System software; NTDS Network design; NTAS Network support; SCTY Information security; SCAD Security operations; PENT Penetration testing; VUAS Vulnerability assessment; PRMG Project management; PGMG Programme management; BUAN Business situation analysis; REQM Requirements definition and management; BPRE Business process improvement; HCEV User experience design; URCH User research; USUP Incident management; PBMG Problem management; CHMG Change control; SLMO Service level management; RLMT Stakeholder relationship management; CNSL Consultancy; QUAS Quality assurance; ITSP Strategic planning; GOVN Governance";
-const LEVEL_GUIDE = "SFIA levels: 1 Follow, 2 Assist, 3 Apply, 4 Enable, 5 Ensure/advise, 6 Initiate/influence, 7 Set strategy. Judge level from responsibility and autonomy shown, not years alone.";
+// Skills come from the CapLynk Capability Taxonomy the Super Admin imports on admin.html (Firestore taxonomy/*).
+// Cached per instance for ten minutes so a re-import is picked up without a redeploy.
+let taxCache = null, taxAt = 0;
+async function taxonomy() {
+  if (taxCache && Date.now() - taxAt < 10 * 60e3) return taxCache;
+  const [meta, skills] = await Promise.all([db.doc("taxonomy/meta").get(), db.doc("taxonomy/skills").get()]);
+  if (!meta.exists || !skills.exists) throw Object.assign(new Error("Import the CapLynk Capability Taxonomy on admin.html first."), { status: 409 });
+  const levels = meta.data().levels || [];
+  const items = skills.data().items || [];
+  taxCache = {
+    maxLevel: Math.max(...levels.map((l) => l.level), 1),
+    levelGuide: "Proficiency levels: " + levels.map((l) => `L${l.level} ${l.name}: ${l.description}`).join(" ") + " Judge level from the autonomy, complexity and influence shown, not years alone.",
+    skillList: items.map((s) => `${s.code} ${s.name}${s.aliases?.length ? " (" + s.aliases.slice(0, 4).join(", ") + ")" : ""}`).join("; "),
+  };
+  taxAt = Date.now();
+  return taxCache;
+}
 
-const CV_TOOL = {
+const cvTool = (max) => ({
   name: "save_candidate",
-  description: "Save the candidate's personal and contact details and SFIA skill profile extracted from their CV.",
+  description: "Save the candidate's personal and contact details and skill profile extracted from their CV.",
   input_schema: {
     type: "object",
     properties: {
@@ -58,27 +73,27 @@ const CV_TOOL = {
       yearsExperience: { type: ["number", "null"] },
       summary: { type: "string", description: "Two neutral sentences on their background, for a recruiter" },
       skills: {
-        type: "array", maxItems: 12,
-        items: { type: "object", properties: { code: { type: "string" }, level: { type: "integer", minimum: 1, maximum: 7 }, evidence: { type: "string", description: "Short phrase from the CV" } }, required: ["code", "level", "evidence"] },
+        type: "array", maxItems: 15,
+        items: { type: "object", properties: { code: { type: "string", description: "Skill ID from the taxonomy" }, level: { type: "integer", minimum: 1, maximum: max }, evidence: { type: "string", description: "Short phrase from the CV" } }, required: ["code", "level", "evidence"] },
       },
     },
     required: ["name", "email", "phone", "location", "headline", "skills"],
   },
-};
-const JOB_TOOL = {
+});
+const jobTool = (max) => ({
   name: "save_role_profile",
-  description: "Save the SFIA skills a job description requires.",
+  description: "Save the taxonomy skills a job description requires.",
   input_schema: {
     type: "object",
     properties: {
       skills: {
-        type: "array", maxItems: 10,
-        items: { type: "object", properties: { code: { type: "string" }, minLevel: { type: "integer", minimum: 1, maximum: 7 }, mustHave: { type: "boolean" } }, required: ["code", "minLevel", "mustHave"] },
+        type: "array", maxItems: 15,
+        items: { type: "object", properties: { code: { type: "string", description: "Skill ID from the taxonomy" }, minLevel: { type: "integer", minimum: 1, maximum: max }, mustHave: { type: "boolean" } }, required: ["code", "minLevel", "mustHave"] },
       },
     },
     required: ["skills"],
   },
-};
+});
 
 async function claudeTool(tool, system, content) {
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
@@ -96,14 +111,16 @@ exports.profiles = onRequest({ ...opts, secrets: [ANTHROPIC_API_KEY] }, async (r
   const { action, text } = req.body || {};
   try {
     if (action === "cv") {
-      const profile = await claudeTool(CV_TOOL,
-        `You extract candidate details from CVs for a skills-based recruiter. Use only SFIA codes from this list: ${SFIA_CODES}. ${LEVEL_GUIDE} Leave a field empty if the CV doesn't state it; never invent contact details.`,
+      const tax = await taxonomy();
+      const profile = await claudeTool(cvTool(tax.maxLevel),
+        `You extract candidate details from CVs for a skills-based recruiter using the CapLynk Capability Taxonomy. Use only skill IDs from this list: ${tax.skillList}. ${tax.levelGuide} Leave a field empty if the CV doesn't state it; never invent contact details.`,
         "CV text:\n\n" + String(text || "").slice(0, 60000));
       return res.json({ profile });
     }
     if (action === "job") {
-      const profile = await claudeTool(JOB_TOOL,
-        `You turn job descriptions into SFIA skill requirements. Use only codes from this list: ${SFIA_CODES}. ${LEVEL_GUIDE} mustHave is true for essential or required skills.`,
+      const tax = await taxonomy();
+      const profile = await claudeTool(jobTool(tax.maxLevel),
+        `You turn job descriptions into skill requirements using the CapLynk Capability Taxonomy. Use only skill IDs from this list: ${tax.skillList}. ${tax.levelGuide} mustHave is true for essential or required skills.`,
         "Job description:\n\n" + String(text || "").slice(0, 30000));
       return res.json({ profile });
     }
@@ -112,7 +129,7 @@ exports.profiles = onRequest({ ...opts, secrets: [ANTHROPIC_API_KEY] }, async (r
       const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
       const msg = await client.messages.create({
         model: CLAUDE_MODEL.value(), max_tokens: 400,
-        system: "You write the summary paragraph a recruiter sends a client about a shortlisted candidate. 3 to 4 sentences, plain British English, factual, no hype, no contact details. Mention fit against the role's SFIA skills and one area to probe at interview if there is a gap.",
+        system: "You write the summary paragraph a recruiter sends a client about a shortlisted candidate. 3 to 4 sentences, plain British English, factual, no hype, no contact details. Mention fit against the role's required skills and one area to probe at interview if there is a gap.",
         messages: [{ role: "user", content: JSON.stringify({ candidate, role, match }).slice(0, 20000) }],
       });
       return res.json({ summary: msg.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim() });
@@ -120,7 +137,7 @@ exports.profiles = onRequest({ ...opts, secrets: [ANTHROPIC_API_KEY] }, async (r
     res.status(400).send("Unknown action");
   } catch (err) {
     console.error("profiles failed", err);
-    res.status(502).send("Claude request failed");
+    res.status(err.status || 502).send(err.status ? err.message : "Claude request failed");
   }
 });
 

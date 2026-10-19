@@ -193,6 +193,10 @@ body.locked > header, body.locked > main { visibility: hidden; }
   <button class="btn ghost sm" id="signOutBtn" type="button">Sign out</button>
 </header>
 
+<div class="warn" id="taxBanner" hidden style="margin:0;border-radius:0;display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap">
+  Skill profiles need the CapLynk Capability Taxonomy. Import the workbook once and CapLynk keeps it in Firebase.
+  <button class="btn sm" id="taxBannerBtn" type="button">Import taxonomy</button>
+</div>
 <main>
   <!-- Every CV candidates upload, parsed on demand -->
   <section class="view" id="view-cvs">
@@ -271,6 +275,15 @@ body.locked > header, body.locked > main { visibility: hidden; }
         </label>
       </div>
       <p class="muted" style="margin:10px 0 0;font-size:13px">Send opens WhatsApp with the message ready. Paste the candidate's replies in with "Log their reply" so the log stays complete.</p>
+    </div>
+    <div class="card">
+      <h3>Capability framework</h3>
+      <p class="muted" style="margin:0 0 10px;font-size:13px" id="taxStatus"></p>
+      <div class="row">
+        <label class="btn sm" for="taxFile">Import taxonomy (.xlsx)</label>
+        <input id="taxFile" type="file" accept=".xlsx,.xls" hidden>
+      </div>
+      <p class="muted" style="margin:10px 0 0;font-size:13px">Use the CapLynk Capability Taxonomy workbook. Importing again replaces the framework; skill and role IDs must stay stable.</p>
     </div>
     <div class="card">
       <h3>Data</h3>
