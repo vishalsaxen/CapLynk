@@ -403,7 +403,7 @@
       <div class="msgs" id="msgs">
         <div class="sys">Conversation started ${fmtTime(conv.createdAt)}</div>
         ${conv.messages.map((m) => m.dir === "sys" ? `<div class="sys">${h(m.text)} · ${fmtTime(m.at)}</div>` : `
-          <div class="msg ${m.dir}">${h(m.text)}<div class="meta">${fmtTime(m.at)}${m.dir === "out" ? " · " + h(m.status || (m.via === "link" ? "opened in WhatsApp" : "sent")) : m.via === "manual" ? " · logged" : ""}</div></div>`).join("")}
+          <div class="msg ${m.dir}">${h(m.text)}<div class="meta">${fmtTime(m.at)}${m.dir === "out" ? " · " + h(m.status || (m.via === "link" ? "opened in WhatsApp" : "sent")) + (m.error ? ": " + h(m.error) : "") : m.via === "manual" ? " · logged" : ""}</div></div>`).join("")}
       </div>
       <div class="composer">
         ${closed ? `<div class="closed-note"><span>Chat closed${conv.closeReason ? " (" + h(conv.closeReason) + ")" : ""} on ${fmtTime(conv.closedAt)}. Messaging is disabled.</span></div>` : `
@@ -463,7 +463,7 @@
     ].filter(Boolean);
     const who = { out: "CapLynk", in: first(candLabel(c)), sys: "Note" };
     const lines = conv.messages.map((m) => `[${stamp(m.at)}] ${who[m.dir] || m.dir}: ${m.text}` +
-      (m.dir === "out" && m.status ? ` (${m.status})` : m.via === "manual" ? " (logged by admin)" : ""));
+      (m.dir === "out" && m.status ? ` (${m.status}${m.error ? ": " + m.error : ""})` : m.via === "manual" ? " (logged by admin)" : ""));
     return head.join("\n") + "\n" + "-".repeat(40) + "\n" + (lines.join("\n") || "No messages yet.") + "\n";
   }
   const logFileName = (c) => "caplynk-whatsapp-" + candLabel(c).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + ".txt";
