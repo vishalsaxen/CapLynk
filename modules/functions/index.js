@@ -215,7 +215,9 @@ exports.waWebhook = onRequest({ region: "us-central1", secrets: [WA_APP_SECRET, 
       const ref = db.doc(`conversations/${idx.data().candidateId}`);
       await db.runTransaction(async (tx) => {
         const snap = await tx.get(ref); if (!snap.exists) return;
-        const messages = (snap.data().messages || []).map((x) => (x.id === s.id ? { ...x, status: s.status } : x));
+        // Keep Meta's reason when a message fails (wrong number, template, payment, marketing limits) so the admin can see it.
+        const e = s.errors?.[0], error = e ? `(#${e.code}) ${e.error_data?.details || e.message || e.title || ""}`.trim() : "";
+        const messages = (snap.data().messages || []).map((x) => (x.id === s.id ? { ...x, status: s.status, ...(error ? { error } : {}) } : x));
         tx.update(ref, { messages });
       });
     }
