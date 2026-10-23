@@ -339,6 +339,12 @@
     if (!conv) { conv = { id: candId, candidateId: candId, status: "open", messages: [], nextStep: "", nextStepDue: "", roleId: "", createdAt: now() }; state.conversations[candId] = conv; }
     return conv;
   }
+  // A conversation belongs to a CV, or to a contact messaged from an Excel sheet (conversations/xl-<number>).
+  function convPerson(conv) {
+    const c = state.candidates.find((x) => x.id === conv.id);
+    if (c || !String(conv.id).startsWith("xl-")) return c || null;
+    return { id: conv.id, name: conv.contactName || "+" + conv.phone, phone: "+" + conv.phone, contact: true };
+  }
   function openChat(candId) { ensureConv(candId); state.chatId = candId; state.wf = state.conversations[candId].status === "closed" ? "closed" : "open"; setTab("wa"); }
 
   function convState(conv) {
@@ -358,11 +364,11 @@
     document.querySelectorAll("[data-wf]").forEach((b) => b.classList.toggle("ghost", b.dataset.wf !== state.wf));
     const t = today();
     const convs = Object.values(state.conversations)
-      .filter((c) => state.candidates.some((x) => x.id === c.id))
+      .filter((c) => convPerson(c))
       .filter((c) => state.wf === "all" || (state.wf === "closed" ? c.status === "closed" : c.status !== "closed") && (state.wf !== "next" || (c.nextStepDue && c.nextStepDue <= t)))
       .sort((a, b) => (b.lastAt || b.createdAt || "").localeCompare(a.lastAt || a.createdAt || ""));
     $("chatList").innerHTML = convs.length ? convs.map((conv) => {
-      const c = state.candidates.find((x) => x.id === conv.id);
+      const c = convPerson(conv);
       const [label, tone] = convState(conv);
       const last = conv.messages[conv.messages.length - 1];
       const due = conv.nextStepDue ? ` · <span class="${conv.nextStepDue <= t && conv.status !== "closed" ? "overdue" : ""}">due ${fmtDay(conv.nextStepDue)}</span>` : "";
@@ -374,7 +380,7 @@
     $("chatList").querySelectorAll("button").forEach((b) => (b.onclick = () => { state.chatId = b.dataset.id; renderChats(); }));
 
     const conv = state.conversations[state.chatId];
-    const c = conv && state.candidates.find((x) => x.id === conv.id);
+    const c = conv && convPerson(conv);
     if (!conv || !c) { $("chatDetail").innerHTML = `<div class="empty"><h3>WhatsApp tracker</h3><p>Every message you send to a candidate lands here with its replies, a next step and a due date. Close a chat when it's no longer needed; closed chats can't be messaged until you reopen them.</p></div>`; return; }
     if (conv.unread) { conv.unread = false; save("conversations", conv); renderUnread(); }
 
@@ -388,7 +394,7 @@
           <div><h1 style="font-size:21px">${h(candLabel(c))} <span class="chip ${tone}" style="vertical-align:middle">${label}</span></h1>
             <div class="sub">${phone ? "+" + h(phone) : "No phone number"} · ${settings.waMode === "api" ? "Business API" : "WhatsApp link"}</div></div>
           <div class="row">
-            <button class="btn ghost sm" id="viewCandBtn" type="button">View CV</button>
+            ${c.contact ? "" : `<button class="btn ghost sm" id="viewCandBtn" type="button">View CV</button>`}
             <button class="btn ghost sm" id="logBtn" type="button">Download log (.txt)</button>
             ${closed ? `<button class="btn sm" id="reopenBtn" type="button">Reopen chat</button>` :
               `<select class="in" id="closeReason" aria-label="Close reason">${CLOSE_REASONS.map((r) => `<option>${r}</option>`).join("")}</select><button class="btn danger sm" id="closeChatBtn" type="button">Close chat</button>`}
@@ -418,7 +424,7 @@
         </div>`}
       </div>`;
     const msgs = $("msgs"); msgs.scrollTop = msgs.scrollHeight;
-    $("viewCandBtn").onclick = () => { state.candId = c.id; setTab("cvs"); };
+    if (!c.contact) $("viewCandBtn").onclick = () => { state.candId = c.id; setTab("cvs"); };
     $("logBtn").onclick = () => download(logFileName(c), convLog(conv, c));
     if (closed) {
       $("reopenBtn").onclick = () => { conv.status = "open"; conv.messages.push({ dir: "sys", text: "Chat reopened", at: now() }); save("conversations", conv); state.wf = "open"; renderChats(); };
@@ -479,17 +485,20 @@
     download("caplynk-whatsapp-logs-" + today() + ".txt", text);
   };
 
+  // Free text only reaches someone who wrote to us in the last 24 hours; otherwise WhatsApp needs the approved template.
+  function inWindow(conv) {
+    const lastIn = [...(conv?.messages || [])].reverse().find((m) => m.dir === "in");
+    return !!lastIn && Date.now() - new Date(lastIn.at).getTime() < 24 * 3600e3;
+  }
   async function sendWhatsApp(conv, c, phone) {
     const text = $("msgText").value.trim();
     if (!text) return toast("Write a message first.");
     if (conv.status === "closed") return toast("This chat is closed. Reopen it to send.");
     if (conv.optedOut) return toast(first(c.name) + " replied STOP, so CapLynk won't message them. Record consent again on their CV if they opt back in.");
     const btn = $("sendBtn"); btn.disabled = true;
-    const lastIn = [...conv.messages].reverse().find((m) => m.dir === "in");
-    const inWindow = lastIn && Date.now() - new Date(lastIn.at).getTime() < 24 * 3600e3;
     if (settings.waMode === "api") {
       try {
-        const r = await api("/api/whatsapp/send", { candidateId: c.id, to: phone, text, useTemplate: !inWindow, candidateName: c.name || "" });
+        const r = await api("/api/whatsapp/send", { candidateId: c.id, to: phone, text, useTemplate: !inWindow(conv), candidateName: c.name || "" });
         conv.messages.push({ id: r.messageId || uid(), dir: "out", text, at: now(), via: "api", status: "sent" }); conv.lastAt = now();
         state.conversations[conv.id] = conv; // the server stores the message; the live listener refreshes it
         renderChats(); return toast("Sent on WhatsApp.");
@@ -575,6 +584,103 @@
     bulkBusy = false; renderBulk();
     $("bulkProgress").textContent = `Sent ${sent} of ${targets.length}.` + (failed.length ? " Not sent: " + failed.join("; ") : "");
     toast(failed.length ? `Sent ${sent}, ${failed.length} failed. See the list in the dialog.` : `Sent to ${sent} candidate${sent === 1 ? "" : "s"}. Replies will appear in the WhatsApp tab.`);
+  };
+
+  // ---------- Excel bulk WhatsApp (columns Recipient Name, Number, Custom Message; Business API only) ----------
+  // A row whose number belongs to a CV is sent in that candidate's conversation; anyone else gets a contact
+  // conversation (conversations/xl-<number>) so their replies and STOP still land in the tracker.
+  let xlRows = [], xlBusy = false, xlFileName = "";
+  async function readSheet(file) {
+    if (!window.XLSX) await loadScript(SHEETJS);
+    const wb = window.XLSX.read(await file.arrayBuffer(), { type: "array" });
+    const sheet = wb.Sheets[wb.SheetNames.find((n) => /recipient/i.test(n)) || wb.SheetNames[0]];
+    const rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
+    const cell = (v) => String(v ?? "").trim();
+    const hi = rows.findIndex((r) => r.some((v) => /number|phone|mobile/i.test(cell(v))) && r.some((v) => /message/i.test(cell(v))));
+    if (hi < 0) throw new Error("Couldn't find the Number and Custom Message columns. Start from the CapLynk template.");
+    const head = rows[hi].map((v) => cell(v).toLowerCase());
+    const col = (re) => head.findIndex((v) => re.test(v));
+    const [ni, pi, mi] = [col(/name/), col(/number|phone|mobile|whatsapp/), col(/message/)];
+    return rows.slice(hi + 1).map((r, i) => ({ line: hi + i + 2, name: cell(r[ni]), number: cell(r[pi]), raw: cell(r[mi]) }))
+      .filter((r) => r.name || r.number || r.raw);
+  }
+  function prepRow(r) {
+    const phone = S.toE164Digits(r.number, settings.cc);
+    const cand = phone && state.candidates.find((c) => S.toE164Digits(c.phone || c.waPhone, settings.cc) === phone);
+    const id = cand ? cand.id : "xl-" + phone, conv = state.conversations[id];
+    const name = r.name || (cand ? candLabel(cand) : "");
+    const text = r.raw.replace(/\{first\}/g, first(name)).replace(/\{name\}/g, name || "there");
+    const tpl = !inWindow(conv);
+    const block = !/^\d{8,15}$/.test(phone) ? "number missing or invalid"
+      : !text ? "no message"
+      : conv?.optedOut || (cand?.waOptOutAt && !cand.waConsent) ? "opted out (replied STOP)"
+      : conv?.status === "closed" ? "chat closed"
+      : tpl && text.length > 1000 ? "over 1,000 characters" : "";
+    return { ...r, phone, cand, id, name, text, tpl, block, ok: null, error: "" };
+  }
+  async function openSheet(file) {
+    if (!file || xlBusy) return;
+    let rows;
+    try { rows = await readSheet(file); } catch (e) { return toast(e.message || "Couldn't read that file."); }
+    if (!rows.length) return toast("That sheet has no recipients under the headings.");
+    const seen = new Map();
+    xlRows = rows.map(prepRow).map((r) => {
+      if (!r.block && seen.has(r.phone)) r.block = "same number as row " + seen.get(r.phone);
+      else if (r.phone) seen.set(r.phone, r.line);
+      return r;
+    });
+    xlFileName = file.name;
+    $("xlConsent").checked = false; $("xlProgress").textContent = "";
+    $("xlNote").hidden = settings.waMode === "api";
+    $("xlNote").textContent = LIVE ? "Sending needs the WhatsApp Business API, which isn't available right now. You can still check the sheet here." : "Preview mode: sending works once CapLynk is live with the WhatsApp Business API.";
+    renderSheet();
+    if (!$("xlDlg").open) $("xlDlg").showModal();
+  }
+  function renderSheet() {
+    const todo = xlRows.filter((r) => !r.block && r.ok !== true).length;
+    const sent = xlRows.filter((r) => r.ok === true).length, failed = xlRows.filter((r) => r.ok === false).length, skipped = xlRows.filter((r) => r.block).length;
+    $("xlSummary").textContent = `${xlFileName}: ${xlRows.length} row${xlRows.length === 1 ? "" : "s"} · ${todo} to send` + (sent ? ` · ${sent} sent` : "") + (failed ? ` · ${failed} failed` : "") + (skipped ? ` · ${skipped} skipped` : "");
+    $("xlRows").innerHTML = xlRows.map((r) => {
+      const res = r.block ? `<span class="chip magenta">Skipped</span> ${h(r.block)}`
+        : r.ok === true ? `<span class="chip green">Sent</span>`
+        : r.ok === false ? `<span class="chip magenta">Failed</span> ${h(r.error)}`
+        : r.sending ? `<span class="chip amber">Sending…</span>` : `<span class="chip">Ready</span>`;
+      return `<tr><td>${r.line}</td><td>${h(r.name || "No name")}${r.cand ? ' <span class="chip green">Candidate</span>' : ""}</td>
+        <td>${/^\d+$/.test(r.phone) ? "+" + h(r.phone) : h(r.number)}</td><td class="msg-cell"><div>${h(r.text)}</div></td>
+        <td>${r.block ? "" : r.tpl ? "Template" : "Free text"}</td><td>${res}</td></tr>`;
+    }).join("");
+    $("xlSendBtn").textContent = todo ? `Send ${todo}` : "Send";
+    $("xlSendBtn").disabled = !todo || xlBusy || settings.waMode !== "api" || !$("xlConsent").checked;
+    $("xlResultsBtn").hidden = !sent && !failed;
+  }
+  ["xlFile", "xlFile2"].forEach((id) => ($(id).onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; openSheet(f); }));
+  $("xlConsent").onchange = () => renderSheet();
+  $("closeXlBtn").onclick = () => { if (!xlBusy) $("xlDlg").close(); };
+  $("xlDlg").oncancel = (e) => { if (xlBusy) e.preventDefault(); };
+  $("xlSendBtn").onclick = async () => {
+    const todo = xlRows.filter((r) => !r.block && r.ok !== true);
+    if (!todo.length || !confirm(`Send ${todo.length} WhatsApp message${todo.length === 1 ? "" : "s"} from ${xlFileName}? Each one is logged in the WhatsApp tracker.`)) return;
+    xlBusy = true;
+    for (const [i, r] of todo.entries()) {
+      r.sending = true; renderSheet(); $("xlProgress").textContent = `Sending ${i + 1} of ${todo.length}…`;
+      try {
+        await api("/api/whatsapp/send", { candidateId: r.id, to: r.phone, text: r.text, useTemplate: r.tpl, ...(r.cand ? {} : { contactName: r.name }) });
+        r.ok = true; r.error = "";
+      } catch (e) { r.ok = false; r.error = String(e.message || "error").slice(0, 160); }
+      r.sending = false;
+      await sleep(250); // stays well inside WhatsApp's per-second limit
+    }
+    xlBusy = false; renderSheet();
+    const sent = todo.filter((r) => r.ok).length;
+    $("xlProgress").textContent = `Sent ${sent} of ${todo.length}.` + (sent < todo.length ? " Press Send again to retry the failed rows." : "");
+    toast(sent < todo.length ? `Sent ${sent}, ${todo.length - sent} failed. Reasons are in the Result column.` : `Sent ${sent}. Delivery and replies appear in the WhatsApp tab.`);
+  };
+  $("xlResultsBtn").onclick = () => {
+    const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = [["Row", "Recipient Name", "Number", "Custom Message", "Sent as", "Result"].join(",")].concat(xlRows.map((r) =>
+      [r.line, q(r.name), q(r.phone ? "+" + r.phone : r.number), q(r.text), r.block ? "" : r.tpl ? "Template" : "Free text",
+        q(r.block ? "Skipped: " + r.block : r.ok === true ? "Sent" : r.ok === false ? "Failed: " + r.error : "Not sent")].join(",")));
+    download(xlFileName.replace(/\.[^.]+$/, "") + "-results.csv", "\ufeff" + lines.join("\n") + "\n"); // BOM so Excel reads UTF-8
   };
 
   // =====================================================================

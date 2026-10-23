@@ -145,15 +145,18 @@ exports.profiles = onRequest({ ...opts, secrets: [ANTHROPIC_API_KEY] }, async (r
 const digits = (s) => String(s || "").replace(/\D/g, "");
 
 // Super Admin only. Conversations live in top-level conversations/{candidateId} (see firestore.rules).
+// Contacts messaged from an Excel sheet (not on a CV) use conversations/xl-<number> and keep the sheet's name as contactName.
 // { ping: true } reports whether the Business API is set up, so admin.html can offer bulk sending.
 const waConfigured = () => !!WA_PHONE_NUMBER_ID.value() && !!WA_TOKEN.value() && WA_TOKEN.value() !== "not-set";
 exports.waSend = onRequest({ ...opts, secrets: [WA_TOKEN] }, async (req, res) => {
   if (req.method !== "POST") return res.status(405).send("Use POST");
   const user = await requireAdmin(req, res); if (!user) return;
-  const { candidateId, to, text, useTemplate, roleId, ping } = req.body || {};
+  const { candidateId, to, text, useTemplate, roleId, contactName, ping } = req.body || {};
   if (ping) return res.json({ configured: waConfigured() });
   const phone = digits(to);
   if (!candidateId || !phone || !String(text || "").trim()) return res.status(400).send("candidateId, to and text are required");
+  const contact = String(candidateId).startsWith("xl-");
+  if (contact && candidateId !== "xl-" + phone) return res.status(400).send("Contact id must match the number");
   if (!waConfigured()) return res.status(503).send("WhatsApp Business API is not configured");
 
   const convRef = db.doc(`conversations/${candidateId}`);
@@ -177,6 +180,7 @@ exports.waSend = onRequest({ ...opts, secrets: [WA_TOKEN] }, async (req, res) =>
     id: candidateId, candidateId, phone, status: "open", lastAt: at, updatedAt: at,
     ...(conv.exists ? {} : { createdAt: at, nextStep: "", nextStepDue: "", roleId: roleId || "" }),
     ...(conv.exists && roleId && !conv.data().roleId ? { roleId } : {}),
+    ...(contact && contactName != null ? { contactName: String(contactName).slice(0, 120) } : {}),
     messages: FieldValue.arrayUnion({ id: messageId, dir: "out", text: String(text), at, via: "api", status: "sent", template: !!useTemplate }),
   }, { merge: true });
   // Index by phone so the webhook can file replies under the right candidate.
@@ -207,7 +211,7 @@ exports.waWebhook = onRequest({ region: "us-central1", secrets: [WA_APP_SECRET, 
         lastAt: at, updatedAt: at, unread: true, ...(stop ? { optedOut: true, optedOutAt: at } : {}),
         messages: FieldValue.arrayUnion({ id: m.id, dir: "in", text, at, via: "api" }),
       }, { merge: true });
-      if (stop) await db.doc(`cvs/${candidateId}`).set({ waConsent: false, waOptOutAt: at }, { merge: true }).catch(() => {});
+      if (stop && !candidateId.startsWith("xl-")) await db.doc(`cvs/${candidateId}`).set({ waConsent: false, waOptOutAt: at }, { merge: true }).catch(() => {});
     }
     for (const s of v.statuses || []) {
       const idx = await db.doc(`waIndex/${digits(s.recipient_id)}`).get();

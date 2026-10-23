@@ -131,6 +131,11 @@ dialog::backdrop { background: rgba(16,24,39,.5); }
 .bulk-list li:last-child label { border-bottom: 0; }
 .bulk-list label > span:nth-child(2) { flex: 1; min-width: 0; }
 .bulk-list label.off { cursor: default; opacity: .7; }
+.xl-table { max-height: 380px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+.xl-table table { font-size: 13.5px; }
+.xl-table th { position: sticky; top: 0; background: var(--panel); }
+.xl-table td.msg-cell { min-width: 240px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.xl-table td.msg-cell div { max-height: 6.4em; overflow: auto; }
 .bulk-list input { width: 17px; height: 17px; accent-color: var(--green); flex: none; }
 .ccard { background: #fff; color: #101827; border-radius: 14px; border: 1px solid #DCE3DD; padding: 26px 28px; margin-bottom: 18px; page-break-inside: avoid; break-inside: avoid; }
 .ccard .cc-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 3px solid #1FB33A; padding-bottom: 12px; margin-bottom: 16px; }
@@ -215,6 +220,9 @@ body.locked > header, body.locked > main { visibility: hidden; }
           <button class="btn ghost sm" id="parseAllBtn" type="button">Parse all new</button>
           <button class="btn ghost sm" id="allCvsBtn" type="button">Download all CVs</button>
           <button class="btn ghost sm" id="bulkBtn" type="button">Bulk WhatsApp</button>
+          <label class="btn ghost sm" for="xlFile">Browse Excel</label>
+          <input id="xlFile" type="file" accept=".xlsx,.xls,.csv" hidden>
+          <a class="btn ghost sm" href="templates/CapLynk_WhatsApp_Bulk_Template.xlsx" download>Excel template</a>
         </div>
         <input class="search" id="candSearch" type="search" placeholder="Search name, skill, email">
       </div>
@@ -320,6 +328,18 @@ body.locked > header, body.locked > main { visibility: hidden; }
       <p class="muted" style="margin:10px 0 0;font-size:13px">Only candidates who agreed to WhatsApp messages can be picked. They agree on Applicant Data, or you can record their consent on their CV. Anyone who replies STOP is skipped from then on.</p>
     </div>
     <div class="row"><button class="btn wa" id="bulkSendBtn" type="button" disabled>Send</button><span class="muted" id="bulkProgress" role="status" style="font-size:13.5px"></span></div>
+  </div>
+</dialog>
+
+<dialog id="xlDlg">
+  <div class="dlg-head"><h2>Send from Excel</h2><div class="row"><a class="btn ghost sm" href="templates/CapLynk_WhatsApp_Bulk_Template.xlsx" download>Download template</a><button class="btn ghost sm" id="closeXlBtn" type="button">Close</button></div></div>
+  <div class="dlg-body">
+    <div class="warn" id="xlNote" hidden></div>
+    <p class="muted" style="margin:0 0 12px;font-size:13.5px" id="xlSummary"></p>
+    <div class="xl-table"><table><thead><tr><th>#</th><th>Recipient</th><th>Number</th><th>Message</th><th>Sent as</th><th>Result</th></tr></thead><tbody id="xlRows"></tbody></table></div>
+    <p class="muted" style="margin:10px 0 0;font-size:13px">Columns: Recipient Name, Number (with country code) and Custom Message. {first} and {name} in a message become the recipient's first or full name. If the person replied to you on WhatsApp in the last 24 hours, the message goes as you wrote it. Otherwise WhatsApp only lets a business start a chat with an approved template, so CapLynk puts your message inside the caplynk_outreach template as one paragraph, up to 1,000 characters.</p>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin:14px 0 12px;font-size:14px"><input type="checkbox" id="xlConsent" style="width:17px;height:17px;accent-color:var(--green);margin-top:2px"> Everyone on this sheet agreed to receive WhatsApp messages from Gaplyn.</label>
+    <div class="row"><button class="btn wa" id="xlSendBtn" type="button" disabled>Send</button><label class="btn ghost sm" for="xlFile2">Choose another file</label><input id="xlFile2" type="file" accept=".xlsx,.xls,.csv" hidden><button class="btn ghost sm" id="xlResultsBtn" type="button" hidden>Download results (.csv)</button><span class="muted" id="xlProgress" role="status" style="font-size:13.5px"></span></div>
   </div>
 </dialog>
 
