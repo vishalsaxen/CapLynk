@@ -169,7 +169,13 @@ exports.waSend = onRequest({ ...opts, secrets: [WA_TOKEN] }, async (req, res) =>
     method: "POST", headers: { Authorization: `Bearer ${WA_TOKEN.value()}`, "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
   const out = await r.json().catch(() => ({}));
-  if (!r.ok) { console.error("WhatsApp send failed", out); return res.status(502).send(out.error?.message || "WhatsApp send failed"); }
+  if (!r.ok) {
+    console.error("WhatsApp send failed", out);
+    // Include Meta's code and detail, which say whether the token, app, number or account is at fault.
+    const e = out.error || {}, code = e.code ? `(#${e.code}${e.error_subcode ? "/" + e.error_subcode : ""}) ` : "";
+    const detail = e.error_user_msg || e.error_data?.details || "";
+    return res.status(502).send(`${code}${e.message || "WhatsApp send failed"}${detail && !String(e.message).includes(detail) ? " " + detail : ""}`);
+  }
 
   const messageId = out.messages?.[0]?.id || crypto.randomUUID();
   const at = new Date().toISOString();
