@@ -152,6 +152,54 @@ dialog::backdrop { background: rgba(16,24,39,.5); }
 .ccard .yes { color: #16892C; font-weight: 700; } .ccard .no { color: #C026D3; font-weight: 700; }
 .ccard .cc-foot { font-size: 11.5px; color: #566070; margin-top: 12px; }
 
+/* Bulk Message for Roles */
+nav.tabs .count.wa { background: #25D366; color: var(--ink); }
+.rb-bar { display: flex; gap: 8px 16px; align-items: center; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 9px 14px; font-size: 13.5px; color: var(--muted); margin-bottom: 16px; }
+.rb-bar b { color: var(--text); }
+.rb-bar .q { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: var(--text); }
+.rb-bar .q i { width: 9px; height: 9px; border-radius: 50%; background: #25D366; display: inline-block; }
+.rb-bar .q.off i { background: var(--amber); }
+.rb-sent { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; color: var(--muted); }
+.rb-sent strong { color: var(--text); font: 700 16px "Outfit", sans-serif; }
+.rb-vars { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 8px 0 0; font-size: 12.5px; color: var(--muted); }
+.rb-vars button { border: 1px solid var(--line); background: var(--bg); border-radius: 7px; padding: 3px 8px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.rb-compose { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); gap: 16px; }
+.rb-compose textarea { width: 100%; min-height: 130px; padding: 9px 11px; border: 1.5px solid var(--line); border-radius: 10px; background: var(--panel); }
+.rb-preview { background: var(--chat-bg); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+.rb-preview .msg { max-width: 100%; }
+.rb-conv { display: grid; grid-template-columns: minmax(260px, 380px) minmax(0, 1fr); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; height: max(520px, calc(100vh - 230px)); }
+.rb-list { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+.rb-list .ph { padding: 12px 14px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
+.rb-filters { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.rb-filters button { border: 1.5px solid var(--line); background: var(--panel); border-radius: 99px; padding: 4px 11px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.rb-filters button[aria-pressed="true"] { background: var(--green); border-color: var(--green); color: var(--ink); }
+.rb-filters button .n { font-size: 11.5px; opacity: .8; margin-left: 3px; }
+.rb-filters select { border: 1.5px solid var(--line); border-radius: 99px; padding: 4px 9px; font-size: 13px; font-weight: 600; background: var(--panel); }
+.rb-people { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0; }
+.rb-people button { width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); background: none; padding: 11px 14px; cursor: pointer; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 11px; }
+.rb-people button:hover { background: var(--bg); }
+.rb-people button[aria-current="true"] { background: var(--green-soft); }
+.rb-av { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; color: #fff; grid-row: span 3; }
+.rb-people .pn { display: flex; gap: 8px; align-items: center; font-weight: 600; min-width: 0; }
+.rb-people .pn span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rb-people .time { margin-left: auto; font-size: 12px; color: var(--muted); font-weight: 500; white-space: nowrap; }
+.rb-people .un .time { color: var(--green-hover); font-weight: 700; }
+.rb-people .snip { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rb-people .un .snip { color: var(--text); font-weight: 600; }
+.rb-people .tags { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+.rb-people .badge { margin-left: auto; min-width: 20px; height: 20px; border-radius: 10px; background: #25D366; color: var(--ink); font-size: 11.5px; font-weight: 700; display: inline-grid; place-items: center; padding: 0 6px; }
+.rb-chat { display: flex; flex-direction: column; min-height: 0; }
+.rb-chat .chat-head { padding: 12px 16px; }
+.rb-chat .msgs { padding: 14px 16px; }
+.rb-chat .composer { padding: 10px 16px 12px; }
+.rb-chat .composer textarea { min-height: 54px; }
+.rb-note { padding: 8px 16px; font-size: 13px; border-bottom: 1px solid var(--line); }
+.rb-note.ok { background: var(--green-soft); color: var(--green-hover); }
+.rb-note.tpl { background: var(--amber-soft); color: var(--amber); }
+.rb-note.bad { background: var(--magenta-soft); color: var(--magenta); }
+@media (max-width: 1000px) { .rb-compose { grid-template-columns: 1fr; } }
+@media (max-width: 800px) { .rb-conv { grid-template-columns: 1fr; height: auto; } .rb-list { border-right: 0; border-bottom: 1px solid var(--line); max-height: 60vh; } .rb-chat .msgs { max-height: 55vh; } }
+
 /* Sign-in gate: covers the workspace until the Super Admin signs in. */
 body.locked > header, body.locked > main { visibility: hidden; }
 .gate { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px; background: var(--bg); }
@@ -197,6 +245,7 @@ body.locked > header, body.locked > main { visibility: hidden; }
     <button role="tab" data-tab="cvs" aria-selected="true">CVs</button>
     <button role="tab" data-tab="wa">WhatsApp<span class="count" id="unreadCount" hidden></span></button>
     <button role="tab" data-tab="roles">Roles &amp; matching</button>
+    <button role="tab" data-tab="rb">Bulk Message for Roles<span class="count wa" id="rbUnread" hidden></span></button>
   </nav>
   <span class="mode" id="modeBadge">Preview</span>
   <span class="who" id="whoami"></span>
@@ -259,6 +308,19 @@ body.locked > header, body.locked > main { visibility: hidden; }
       <ul class="list" id="roleList"></ul>
     </aside>
     <div class="detail" id="roleDetail"></div>
+  </section>
+
+  <!-- Bulk Message for Roles: everyone in a role's category, their replies, and one bulk WhatsApp send -->
+  <section class="view" id="view-rb" hidden>
+    <aside class="side">
+      <div class="side-head">
+        <h2>Roles</h2>
+        <div class="row"><button class="btn sm" id="rbNewRoleBtn" type="button">+ Add role</button></div>
+        <input class="search" id="rbRoleSearch" type="search" placeholder="Search role or company">
+      </div>
+      <ul class="list" id="rbRoleList"></ul>
+    </aside>
+    <div class="detail" id="rbDetail"></div>
   </section>
 </main>
 
@@ -340,6 +402,28 @@ body.locked > header, body.locked > main { visibility: hidden; }
     <p class="muted" style="margin:10px 0 0;font-size:13px">Columns: Recipient Name, Number (with country code) and Custom Message. {first} and {name} in a message become the recipient's first or full name. If the person replied to you on WhatsApp in the last 24 hours, the message goes as you wrote it. Otherwise WhatsApp only lets a business start a chat with an approved template, so CapLynk puts your message inside the caplynk_outreach template as one paragraph, up to 1,000 characters.</p>
     <label style="display:flex;gap:8px;align-items:flex-start;margin:14px 0 12px;font-size:14px"><input type="checkbox" id="xlConsent" style="width:17px;height:17px;accent-color:var(--green);margin-top:2px"> Everyone on this sheet agreed to receive WhatsApp messages from Gaplyn.</label>
     <div class="row"><button class="btn wa" id="xlSendBtn" type="button" disabled>Send</button><label class="btn ghost sm" for="xlFile2">Choose another file</label><input id="xlFile2" type="file" accept=".xlsx,.xls,.csv" hidden><button class="btn ghost sm" id="xlResultsBtn" type="button" hidden>Download results (.csv)</button><span class="muted" id="xlProgress" role="status" style="font-size:13.5px"></span></div>
+  </div>
+</dialog>
+
+<dialog id="rbRoleDlg" style="width:min(520px, calc(100vw - 24px))">
+  <form method="dialog" id="rbRoleForm">
+    <div class="dlg-head"><h2>Add role</h2><button class="btn ghost sm" value="cancel" type="submit" formnovalidate>Cancel</button></div>
+    <div class="dlg-body">
+      <p class="muted" style="margin:0 0 14px;font-size:13.5px">Create a role to send bulk WhatsApp messages for. The title and company go into the message, and the role also appears under Roles &amp; matching.</p>
+      <label class="f">Role title<input id="rbTitle" required placeholder="e.g. Instructional Designer"></label>
+      <label class="f" style="margin-top:12px">Company<input id="rbClient" placeholder="e.g. Infopro Learning"></label>
+      <label class="f" style="margin-top:12px">Location (optional)<input id="rbLocation" placeholder="e.g. Noida, onsite"></label>
+      <div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn" value="ok" type="submit">Add role</button></div>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="rbAddDlg">
+  <div class="dlg-head"><h2 id="rbAddTitle">Add candidates</h2><div class="row"><button class="btn sm" id="rbAddGo" type="button" disabled>Add</button><button class="btn ghost sm" id="rbAddClose" type="button">Close</button></div></div>
+  <div class="dlg-body">
+    <input class="search" id="rbAddSearch" type="search" placeholder="Search name, title, skill" style="margin-bottom:10px">
+    <ul class="bulk-list" id="rbAddList"></ul>
+    <p class="muted" style="margin:10px 0 0;font-size:13px">Candidates join a role's category on their own when their current title names the role, their skills match it at 60% or more, they're shortlisted on it, or you've messaged them about it. Add anyone else here.</p>
   </div>
 </dialog>
 

@@ -3,6 +3,7 @@
 // WhatsApp: Business Cloud API when it's set up (single and bulk sends, replies via webhook), otherwise wa.me click-to-chat;
 //   each conversation is kept as a log that downloads as .txt. Bulk sends go only to candidates who agreed to WhatsApp messages.
 // Tracker: per-candidate conversation with status, next step, due date, and close/reopen.
+// Bulk Message for Roles: every candidate in a role's category with reply/consent filters, one bulk send, and the chats.
 // Roles: skill profiles from the CapLynk Capability Taxonomy, ranked matches, and a printable client summary card.
 // Taxonomy: imported from Gaplyn's Excel workbook in Settings and kept in Firestore taxonomy/{meta,skills,roles}.
 // Storage: top-level Firestore collections cvs/, roles/, conversations/ that only the admin account can read (see firestore.rules).
@@ -25,7 +26,8 @@
 
   const ADMIN_EMAIL = "vaani.s@gaplyn.com";
   const settings = Object.assign({ cc: "44", sender: "" }, lsGet(SET_KEY, {}), { waMode: "link" });
-  const state = { candidates: [], roles: [], conversations: {}, tab: "cvs", candId: null, chatId: null, roleId: null, wf: "open", q: "" };
+  const state = { candidates: [], roles: [], conversations: {}, tab: "cvs", candId: null, chatId: null, roleId: null, wf: "open", q: "",
+    rbRoleId: null, rbFilter: "all", rbConsent: "any", rbQ: "", rbRoleQ: "", rbPerson: null, rbReply: "", rbBusy: false, rbProgress: "" };
   let fb = null; // { db, fs, user } in live mode
 
   // ---------- storage ----------
@@ -67,7 +69,7 @@
   function setTab(tab) {
     state.tab = tab;
     document.querySelectorAll("nav.tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
-    ["cvs", "wa", "roles"].forEach((t) => ($("view-" + t).hidden = t !== tab));
+    ["cvs", "wa", "roles", "rb"].forEach((t) => ($("view-" + t).hidden = t !== tab));
     render();
   }
   document.querySelectorAll("nav.tabs button").forEach((b) => (b.onclick = () => setTab(b.dataset.tab)));
@@ -77,6 +79,7 @@
     if (state.tab === "cvs") renderCandidates();
     if (state.tab === "wa") renderChats();
     if (state.tab === "roles") renderRoles();
+    if (state.tab === "rb") renderRoleBulk();
   }
 
   // =====================================================================
@@ -245,15 +248,7 @@
     $("addSkillBtn").onclick = () => { c.skills.push({ code: unusedCode(c.skills), level: 3, evidence: "" }); save("candidates", c); renderCandidates(); };
     $("parseBtn").onclick = async () => { $("parseBtn").disabled = true; $("parseBtn").textContent = "Parsing…"; await parseCandidate(c); renderCandidates(); };
     $("waBtn").onclick = () => openChat(c.id);
-    $("consentBtn").onclick = () => {
-      if (c.waConsent) { c.waConsent = false; c.waConsentAt = ""; }
-      else {
-        if (!confirm("Only record consent if " + candLabel(c) + " has agreed to WhatsApp messages from Gaplyn Services, in writing or on a call. Record it now?")) return;
-        c.waConsent = true; c.waConsentAt = now(); c.waConsentBy = "admin"; delete c.waOptOutAt;
-        const conv = state.conversations[c.id]; if (conv?.optedOut) { conv.optedOut = false; save("conversations", conv); }
-      }
-      save("candidates", c); renderCandidates();
-    };
+    $("consentBtn").onclick = () => toggleConsent(c, renderCandidates);
     if ($("cvDlBtn")) $("cvDlBtn").onclick = () => downloadOriginal(c);
     $("txtDlBtn").onclick = () => downloadText(c);
     if ($("attachFile")) $("attachFile").onchange = async (e) => {
@@ -267,6 +262,15 @@
     $("delBtn").onclick = async () => { if (!confirm("Delete " + candLabel(c) + " and their WhatsApp history?")) return; await remove("candidates", c.id);
       if (c.storagePath && fb?.st) fb.st.deleteObject(fb.st.ref(fb.bucket, c.storagePath)).catch(console.error); if (conv) await remove("conversations", c.id); state.candId = state.candidates[0]?.id || null; render(); };
     if (dup) $("dupLink").onclick = (e) => { e.preventDefault(); state.candId = dup.id; renderCandidates(); };
+  }
+  function toggleConsent(c, after) {
+    if (c.waConsent) { c.waConsent = false; c.waConsentAt = ""; }
+    else {
+      if (!confirm("Only record consent if " + candLabel(c) + " has agreed to WhatsApp messages from Gaplyn Services, in writing or on a call. Record it now?")) return;
+      c.waConsent = true; c.waConsentAt = now(); c.waConsentBy = "admin"; delete c.waOptOutAt;
+      const conv = state.conversations[c.id]; if (conv?.optedOut) { conv.optedOut = false; save("conversations", conv); }
+    }
+    save("candidates", c); after();
   }
   function consentChip(c) {
     if (state.conversations[c.id]?.optedOut || (c.waOptOutAt && !c.waConsent)) return '<span class="chip magenta">WhatsApp: opted out</span>';
@@ -356,6 +360,7 @@
   function renderUnread() {
     const n = Object.values(state.conversations).filter((c) => c.unread).length;
     $("unreadCount").hidden = !n; $("unreadCount").textContent = n;
+    const r = rbUnreadTotal(); $("rbUnread").hidden = !r; $("rbUnread").textContent = r;
   }
 
   document.querySelectorAll("[data-wf]").forEach((b) => (b.onclick = () => { state.wf = b.dataset.wf; renderChats(); }));
@@ -449,7 +454,7 @@
       conv.messages.push({ id: uid(), dir: "in", text, at: now(), via: "manual" }); conv.lastAt = now();
       save("conversations", conv); renderChats();
     };
-    $("sendBtn").onclick = () => sendWhatsApp(conv, c, phone);
+    $("sendBtn").onclick = () => sendWhatsApp(conv, c, phone, $("msgText").value.trim(), $("sendBtn"), renderChats);
   }
 
   // ---------- conversation logs (.txt) ----------
@@ -490,25 +495,24 @@
     const lastIn = [...(conv?.messages || [])].reverse().find((m) => m.dir === "in");
     return !!lastIn && Date.now() - new Date(lastIn.at).getTime() < 24 * 3600e3;
   }
-  async function sendWhatsApp(conv, c, phone) {
-    const text = $("msgText").value.trim();
+  async function sendWhatsApp(conv, c, phone, text, btn, after) {
     if (!text) return toast("Write a message first.");
     if (conv.status === "closed") return toast("This chat is closed. Reopen it to send.");
     if (conv.optedOut) return toast(first(c.name) + " replied STOP, so CapLynk won't message them. Record consent again on their CV if they opt back in.");
-    const btn = $("sendBtn"); btn.disabled = true;
+    btn.disabled = true;
     if (settings.waMode === "api") {
       try {
-        const r = await api("/api/whatsapp/send", { candidateId: c.id, to: phone, text, useTemplate: !inWindow(conv), candidateName: c.name || "" });
+        const r = await api("/api/whatsapp/send", { candidateId: c.id, to: phone, text, useTemplate: !inWindow(conv), candidateName: c.name || "", roleId: conv.roleId || "" });
         conv.messages.push({ id: r.messageId || uid(), dir: "out", text, at: now(), via: "api", status: "sent" }); conv.lastAt = now();
         state.conversations[conv.id] = conv; // the server stores the message; the live listener refreshes it
-        renderChats(); return toast("Sent on WhatsApp.");
+        after(); return toast("Sent on WhatsApp.");
       } catch (e) {
         toast("Business API unavailable (" + (e.message || "error").slice(0, 80) + "). Opening WhatsApp instead.");
       }
     }
     window.open("https://wa.me/" + phone + "?text=" + encodeURIComponent(text), "_blank", "noopener");
     conv.messages.push({ id: uid(), dir: "out", text, at: now(), via: "link", status: "opened in WhatsApp" }); conv.lastAt = now();
-    await save("conversations", conv); renderChats();
+    await save("conversations", conv); after();
   }
 
   // ---------- bulk WhatsApp (Business API only, consented candidates only) ----------
@@ -681,6 +685,314 @@
       [r.line, q(r.name), q(r.phone ? "+" + r.phone : r.number), q(r.text), r.block ? "" : r.tpl ? "Template" : "Free text",
         q(r.block ? "Skipped: " + r.block : r.ok === true ? "Sent" : r.ok === false ? "Failed: " + r.error : "Not sent")].join(",")));
     download(xlFileName.replace(/\.[^.]+$/, "") + "-results.csv", "\ufeff" + lines.join("\n") + "\n"); // BOM so Excel reads UTF-8
+  };
+
+  // =====================================================================
+  // Bulk Message for Roles: everyone in a role's category, their replies and consent, and one bulk WhatsApp send
+  // =====================================================================
+  // A candidate falls in a role's category when you added them or shortlisted them, you messaged them about the role,
+  // their current title names the role (directly or through the taxonomy's alternate titles), or their skills match it at 60%+.
+  // Sends reuse /api/whatsapp/send: template outside the 24-hour window, consented candidates only, STOP respected.
+  const RB_MATCH = 60;
+  const RB_FILTERS = [["all", "All"], ["unread", "Unread"], ["replied", "Replied"], ["noreply", "No reply"], ["failed", "Failed"]];
+  const RB_CONSENT = [["any", "Consent: any"], ["optin", "Opted in"], ["unknown", "No consent yet"], ["optout", "Opted out"]];
+  const RB_COLORS = ["#16a34a", "#0ea5e9", "#8b5cf6", "#f59e0b", "#ef4444", "#14b8a6", "#ec4899", "#6366f1", "#65a30d", "#f97316"];
+  const normTitle = (s) => " " + String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() + " ";
+  const newestRole = () => [...state.roles].sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))[0];
+  const rbRole = () => state.roles.find((r) => r.id === state.rbRoleId);
+  const company = (r) => r.client || "our client";
+
+  function categoryReason(c, r, tax) {
+    if ((r.bulkExclude || []).includes(c.id)) return "";
+    if ((r.bulkAdd || []).includes(c.id)) return "Added";
+    if ((r.shortlist || []).includes(c.id)) return "Shortlisted";
+    if ((r.bulkSentTo || []).includes(c.id) || state.conversations[c.id]?.roleId === r.id) return "Messaged";
+    const head = normTitle(c.headline), title = normTitle(r.title);
+    if (c.headline && title.trim() && head.includes(title)) return "Title match";
+    if (tax && c.headline && S.findRole(c.headline)?.id === tax) return "Title match";
+    if ((r.skills || []).length && (c.skills || []).length) { const m = S.match(c, r).score; if (m >= RB_MATCH) return "Skills " + m + "%"; }
+    return "";
+  }
+  function roleMembers(r) {
+    const tax = r.taxRoleId || S.findRole(r.title)?.id || "";
+    return state.candidates.map((c) => ({ c, why: categoryReason(c, r, tax) })).filter((x) => x.why);
+  }
+  function rbStatus(c) {
+    const conv = state.conversations[c.id], msgs = conv?.messages || [];
+    const outs = msgs.filter((m) => m.dir === "out"), replied = msgs.some((m) => m.dir === "in");
+    const failed = !replied && outs[outs.length - 1]?.status === "failed";
+    const consent = conv?.optedOut || (c.waOptOutAt && !c.waConsent) ? "optout" : c.waConsent ? "optin" : "unknown";
+    const unread = conv?.unread ? Math.max(1, msgs.length - 1 - msgs.map((m) => m.dir).lastIndexOf("out")) : 0;
+    return { conv, replied, failed, noreply: !!outs.length && !replied && !failed, unread, consent, last: [...msgs].reverse().find((m) => m.dir !== "sys") };
+  }
+  const rbMatches = (st, f) => f === "all" || (f === "unread" ? st.unread > 0 : !!st[f]);
+  function rbUnreadTotal() {
+    const ids = new Set();
+    for (const conv of Object.values(state.conversations)) {
+      if (!conv.unread) continue;
+      const c = state.candidates.find((x) => x.id === conv.id);
+      if (c && state.roles.some((r) => categoryReason(c, r, r.taxRoleId || "") )) ids.add(c.id);
+    }
+    return ids.size;
+  }
+  function rbFill(raw, c, r) {
+    return fillMessage(raw, c, r).replace(/\{company\}/g, company(r)).replace(/\{location\}/g, r.location || "");
+  }
+  function rbDefault(r) {
+    return "Hi {first}, this is {sender}. We are hiring {a_role} for {company}" + (r.location ? " ({location})" : "") +
+      " and your profile looks like a strong match. Would you like to hear more about it?";
+  }
+  const initials = (name) => String(name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase() || "?";
+  const avColor = (s) => { let n = 0; for (const ch of String(s)) n = (n * 31 + ch.charCodeAt(0)) >>> 0; return RB_COLORS[n % RB_COLORS.length]; };
+  const shortTime = (iso) => {
+    if (!iso) return ""; const d = new Date(iso);
+    return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : d.toLocaleDateString([], { day: "numeric", month: "short" });
+  };
+  const consentTag = (k) => k === "optin" ? '<span class="chip green">Opted in</span>' : k === "optout" ? '<span class="chip magenta">Opted out</span>' : '<span class="chip amber">No consent yet</span>';
+  function stateTag(st) {
+    if (st.failed) return '<span class="chip magenta">Failed</span>';
+    if (st.replied) return '<span class="chip green">Replied</span>';
+    if (st.noreply) return '<span class="chip">No reply</span>';
+    return '<span class="chip">Not messaged</span>';
+  }
+
+  $("rbRoleSearch").oninput = (e) => { state.rbRoleQ = e.target.value.toLowerCase(); renderRoleBulk(); };
+
+  function renderRoleBulk() {
+    renderUnread();
+    const q = state.rbRoleQ;
+    const roles = [...state.roles].sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
+      .filter((r) => !q || [r.title, r.client, r.location].join(" ").toLowerCase().includes(q));
+    $("rbRoleList").innerHTML = roles.length ? roles.map((r) => {
+      const mem = roleMembers(r), sts = mem.map((x) => rbStatus(x.c));
+      const un = sts.reduce((a, s) => a + s.unread, 0), rep = sts.filter((s) => s.replied).length, sent = (r.bulkSends || []).length;
+      return `<li><button data-id="${r.id}" aria-current="${r.id === state.rbRoleId}">
+        <span class="li-top"><span>${h(r.title)}</span>${un ? `<span class="chip green">${un} unread</span>` : ""}</span>
+        <span class="li-sub">${h([r.client, r.location].filter(Boolean).join(" · ") || "No company yet")}</span>
+        <span class="row" style="gap:5px;margin-top:4px"><span class="chip">${mem.length} in category</span>${sent ? `<span class="chip green">${rep} replied</span>` : '<span class="chip">Not sent yet</span>'}</span>
+      </button></li>`;
+    }).join("") : `<li class="muted" style="padding:14px">${state.roles.length ? "No matches." : "No roles yet. Add one to start."}</li>`;
+    $("rbRoleList").querySelectorAll("button").forEach((b) => (b.onclick = () => { state.rbRoleId = b.dataset.id; state.rbPerson = null; state.rbFilter = "all"; state.rbConsent = "any"; state.rbQ = ""; renderRoleBulk(); }));
+
+    const r = rbRole();
+    if (!r) {
+      $("rbDetail").innerHTML = `<div class="empty"><h3>Bulk Message for Roles</h3><p>Pick a role, or add one, to see every candidate in that role's category. Send them one WhatsApp message together, then follow replies with the All, Unread, Replied, No reply and Failed filters.</p><button class="btn" id="rbEmptyAdd" type="button">+ Add role</button></div>`;
+      $("rbEmptyAdd").onclick = () => $("rbNewRoleBtn").click(); return;
+    }
+    r.bulkDraft ??= rbDefault(r);
+    const mem = roleMembers(r).map((x) => ({ ...x, st: rbStatus(x.c) }))
+      .sort((a, b) => (b.st.unread - a.st.unread) || (b.st.last?.at || "").localeCompare(a.st.last?.at || "") || candLabel(a.c).localeCompare(candLabel(b.c)));
+    const byConsent = mem.filter((x) => state.rbConsent === "any" || x.st.consent === state.rbConsent);
+    const pq = state.rbQ;
+    const view = byConsent.filter((x) => rbMatches(x.st, state.rbFilter))
+      .filter((x) => !pq || [candLabel(x.c), x.c.phone, x.c.waPhone, x.c.headline].join(" ").toLowerCase().includes(pq));
+    const count = (f) => byConsent.filter((x) => rbMatches(x.st, f)).length;
+    const targets = view.filter((x) => !bulkBlock(x.c));
+    const blocked = view.length - targets.length;
+    const apiOn = settings.waMode === "api";
+
+    // Sent today across every chat, as a rough guide against Meta's daily limit on new conversations.
+    const t = today();
+    const sentToday = Object.values(state.conversations).reduce((a, cv) => a + (cv.messages || []).filter((m) => m.dir === "out" && m.via === "api" && (m.at || "").slice(0, 10) === t).length, 0);
+    const sends = r.bulkSends || [], lastSend = sends[sends.length - 1];
+    const notReplied = mem.filter((x) => x.st.noreply).length;
+    const sample = (targets[0] || mem[0])?.c || { name: "Priya Sharma" };
+
+    $("rbDetail").innerHTML = `
+      <div class="rb-bar">
+        <span class="q ${apiOn ? "" : "off"}"><i></i>${apiOn ? "WhatsApp Business API connected" : LIVE ? "WhatsApp Business API not available" : "Preview mode"}</span>
+        <span>Sent today: <b>${sentToday}</b></span>
+        <span>Only candidates who agreed to WhatsApp messages are sent to. STOP replies are skipped from then on.</span>
+      </div>
+      <div class="title-row">
+        <div><h1>${h(r.title)}</h1><div class="sub">${h([r.client, r.location].filter(Boolean).join(" · ") || "Add the company under Roles & matching")}</div></div>
+        <div class="row"><button class="btn ghost" id="rbAddBtn" type="button">Add candidates</button><button class="btn ghost" id="rbOpenRole" type="button">Role details</button></div>
+      </div>
+      <div class="rb-sent">${lastSend
+        ? `<strong>Message sent</strong> <span class="chip">${sends.length} send${sends.length === 1 ? "" : "s"}</span> <span>Latest ${h(fmtTime(lastSend.at))} to ${lastSend.sent} ${lastSend.sent === 1 ? "person" : "people"}${lastSend.failed ? ` (${lastSend.failed} failed)` : ""}. ${notReplied} ${notReplied === 1 ? "has" : "have"} not replied.</span>`
+        : `<strong>Not sent yet</strong> <span>${mem.length} candidate${mem.length === 1 ? "" : "s"} in this role's category, ${mem.filter((x) => !bulkBlock(x.c)).length} can receive WhatsApp messages.</span>`}</div>
+
+      <div class="card"><h3>Bulk message <span class="muted" style="font:500 13px Figtree, sans-serif">goes to the candidates in the list below, as filtered</span></h3>
+        <div class="rb-compose">
+          <div>
+            <textarea id="rbText" maxlength="1000" aria-label="Bulk message">${h(r.bulkDraft)}</textarea>
+            <div class="rb-vars">Insert: ${["first", "role", "a_role", "company", "location", "sender"].map((v) => `<button type="button" data-var="${v}">{${v}}</button>`).join("")}<span style="margin-left:auto" id="rbLen">${r.bulkDraft.length} / 1000</span></div>
+            <p class="muted" style="margin:8px 0 0;font-size:13px">{first} becomes each candidate's first name, {a_role} reads "${h(/^[aeiou]/i.test(r.title) ? "an " : "a ")}${h(r.title)}". People who replied in the last 24 hours get it as written; everyone else gets it inside your approved caplynk_outreach template as one paragraph.</p>
+          </div>
+          <div class="rb-preview" aria-label="Preview"><span class="muted" style="font-size:12px;font-weight:600">PREVIEW FOR ${h(first(candLabel(sample)).toUpperCase())}</span><div class="msg out" id="rbPreview">${h(rbFill(r.bulkDraft, sample, r))}</div></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn wa" id="rbSendBtn" type="button" ${!targets.length || state.rbBusy || !apiOn ? "disabled" : ""}>${state.rbBusy ? "Sending…" : targets.length ? `Send to ${targets.length}` : "Send"}</button>
+          <span class="muted" style="font-size:13.5px" role="status">${h(state.rbProgress || (
+            !apiOn ? (LIVE ? "Bulk sending needs the WhatsApp Business API." : "Preview mode: sending works once CapLynk is live.")
+            : `${targets.length} of ${view.length} in this view can receive it` + (blocked ? `; ${blocked} skipped (${rbSkipSummary(view)})` : "") + "."))}</span>
+        </div>
+      </div>
+
+      <div class="rb-conv">
+        <div class="rb-list">
+          <div class="ph">
+            <input class="search" id="rbSearch" type="search" placeholder="Search name or phone" value="${h(state.rbQ)}">
+            <div class="rb-filters" role="group" aria-label="Filter candidates">
+              ${RB_FILTERS.map(([k, l]) => `<button type="button" data-rbf="${k}" aria-pressed="${state.rbFilter === k}">${l}<span class="n">${count(k)}</span></button>`).join("")}
+              <select id="rbConsent" aria-label="Consent">${RB_CONSENT.map(([k, l]) => `<option value="${k}" ${state.rbConsent === k ? "selected" : ""}>${l}</option>`).join("")}</select>
+            </div>
+          </div>
+          <ul class="rb-people">${view.length ? view.map(({ c, st, why }) => `
+            <li><button data-p="${c.id}" aria-current="${c.id === state.rbPerson}" class="${st.unread ? "un" : ""}">
+              <span class="rb-av" style="background:${avColor(c.id)}">${h(initials(candLabel(c)))}</span>
+              <span class="pn">${st.unread ? '<span class="dot" style="background:#25D366"></span>' : ""}<span>${h(candLabel(c))}</span><span class="time">${h(shortTime(st.last?.at))}</span></span>
+              <span class="snip">${h(st.last ? (st.last.dir === "out" ? "You: " : "") + st.last.text : [c.headline, why].filter(Boolean).join(" · "))}</span>
+              <span class="tags">${consentTag(st.consent)}${stateTag(st)}${st.unread ? `<span class="badge">${st.unread}</span>` : ""}</span>
+            </button></li>`).join("") : `<li class="muted" style="padding:14px">${mem.length ? "No one matches these filters." : "No candidates in this role's category yet. Parse CVs, shortlist people under Roles & matching, or use Add candidates."}</li>`}</ul>
+        </div>
+        <div class="rb-chat" id="rbChat"></div>
+      </div>`;
+
+    $("rbText").oninput = (e) => { r.bulkDraft = e.target.value; $("rbPreview").textContent = rbFill(r.bulkDraft, sample, r); $("rbLen").textContent = r.bulkDraft.length + " / 1000"; };
+    $("rbText").onchange = () => save("roles", r);
+    $("rbDetail").querySelectorAll("[data-var]").forEach((b) => (b.onclick = () => {
+      const ta = $("rbText"), ins = "{" + b.dataset.var + "}", at = ta.selectionStart ?? ta.value.length;
+      ta.value = ta.value.slice(0, at) + ins + ta.value.slice(ta.selectionEnd ?? at); ta.focus(); ta.selectionStart = ta.selectionEnd = at + ins.length;
+      ta.oninput({ target: ta }); save("roles", r);
+    }));
+    $("rbSearch").oninput = (e) => { state.rbQ = e.target.value.toLowerCase(); renderRoleBulk(); const s = $("rbSearch"); s.focus(); s.selectionStart = s.selectionEnd = s.value.length; };
+    $("rbDetail").querySelectorAll("[data-rbf]").forEach((b) => (b.onclick = () => { state.rbFilter = b.dataset.rbf; renderRoleBulk(); }));
+    $("rbConsent").onchange = (e) => { state.rbConsent = e.target.value; renderRoleBulk(); };
+    $("rbDetail").querySelectorAll("[data-p]").forEach((b) => (b.onclick = () => { state.rbPerson = b.dataset.p; state.rbReply = ""; renderRoleBulk(); }));
+    $("rbAddBtn").onclick = () => openRbAdd(r);
+    $("rbOpenRole").onclick = () => { state.roleId = r.id; setTab("roles"); };
+    $("rbSendBtn").onclick = () => rbSend(r, targets.map((x) => x.c));
+    renderRbChat(r, mem.find((x) => x.c.id === state.rbPerson));
+  }
+
+  function rbSkipSummary(view) {
+    const n = {};
+    view.forEach((x) => { const why = bulkBlock(x.c); if (why) n[why] = (n[why] || 0) + 1; });
+    return Object.entries(n).map(([k, v]) => v + " " + k).join(", ");
+  }
+
+  function renderRbChat(r, m) {
+    const box = $("rbChat");
+    if (!m) { box.innerHTML = `<div class="empty" style="margin:auto;padding:16px"><h3 style="font-size:18px">Pick a candidate</h3><p>Their WhatsApp chat opens here. Reply within 24 hours of their last message as free text; after that CapLynk uses your approved template.</p></div>`; return; }
+    const { c, st, why } = m, conv = st.conv;
+    if (conv?.unread) { conv.unread = false; save("conversations", conv); renderUnread(); }
+    const phone = S.toE164Digits(c.phone || c.waPhone, settings.cc);
+    const block = bulkBlock(c), closed = conv?.status === "closed";
+    const optout = st.consent === "optout";
+    const note = optout ? ["bad", "Opted out. CapLynk won't message " + first(candLabel(c)) + " unless they opt back in and you record their consent again."]
+      : closed ? ["bad", "This chat is closed. Reopen it in the WhatsApp tab to message them."]
+      : !phone ? ["bad", "No phone number on this CV yet."]
+      : inWindow(conv) ? ["ok", "They replied in the last 24 hours, so your reply goes as free text."]
+      : ["tpl", "Outside the 24-hour window: your message goes inside the approved template."];
+    box.innerHTML = `
+      <div class="chat-head">
+        <div class="title-row" style="margin:0">
+          <div><h1 style="font-size:19px">${h(candLabel(c))}</h1>
+            <div class="sub" style="font-size:13px">${h([phone ? "+" + phone : "", c.headline].filter(Boolean).join(" · "))} · <span title="Why they're in this role's category">${h(why)}</span></div></div>
+          <div class="row">
+            <button class="btn ghost sm" id="rbConsentBtn" type="button">${c.waConsent ? "Remove consent" : "Record consent"}</button>
+            <button class="btn ghost sm" id="rbViewCv" type="button">View CV</button>
+            <button class="btn ghost sm" id="rbInWa" type="button">Open in WhatsApp tab</button>
+            <button class="btn danger sm" id="rbRemove" type="button">Remove from role</button>
+          </div>
+        </div>
+        <div class="row" style="font-size:13px">WhatsApp consent: ${consentTag(st.consent)}<span class="muted">${h(c.waConsent ? (c.waConsentBy === "admin" ? "Recorded by the admin " : "Ticked on Applicant Data ") + fmtTime(c.waConsentAt) : optout ? "Replied STOP " + fmtTime(conv?.optedOutAt || c.waOptOutAt) : "Bulk messages skip them until they agree")}</span></div>
+      </div>
+      <div class="rb-note ${note[0]}">${h(note[1])}</div>
+      <div class="msgs" id="rbMsgs">
+        ${conv?.messages?.length ? conv.messages.map((x) => x.dir === "sys" ? `<div class="sys">${h(x.text)} · ${fmtTime(x.at)}</div>` : `
+          <div class="msg ${x.dir}">${h(x.text)}<div class="meta">${fmtTime(x.at)}${x.dir === "out" ? " · " + h(x.status || "sent") + (x.error ? ": " + h(x.error) : "") : ""}</div></div>`).join("")
+          : '<div class="sys">No messages yet</div>'}
+      </div>
+      <div class="composer">
+        <textarea id="rbReply" placeholder="${block && block !== "no WhatsApp consent" ? "Messaging not available" : "Message to " + h(first(candLabel(c)))}" ${optout || closed || !phone ? "disabled" : ""}>${h(state.rbReply)}</textarea>
+        <div class="row" style="justify-content:flex-end"><button class="btn wa" id="rbReplyBtn" type="button" ${optout || closed || !phone ? "disabled" : ""}>Send</button></div>
+      </div>`;
+    const msgs = $("rbMsgs"); msgs.scrollTop = msgs.scrollHeight;
+    $("rbConsentBtn").onclick = () => toggleConsent(c, renderRoleBulk);
+    $("rbViewCv").onclick = () => { state.candId = c.id; setTab("cvs"); };
+    $("rbInWa").onclick = () => openChat(c.id);
+    $("rbRemove").onclick = () => {
+      if (!confirm("Remove " + candLabel(c) + " from " + r.title + "? Their chat history stays in the WhatsApp tab.")) return;
+      r.bulkAdd = (r.bulkAdd || []).filter((id) => id !== c.id);
+      r.bulkExclude = [...new Set([...(r.bulkExclude || []), c.id])];
+      state.rbPerson = null; save("roles", r); renderRoleBulk();
+    };
+    $("rbReply").oninput = (e) => (state.rbReply = e.target.value);
+    $("rbReplyBtn").onclick = async () => {
+      const cv = ensureConv(c.id); if (!cv.roleId) cv.roleId = r.id;
+      await sendWhatsApp(cv, c, phone, state.rbReply.trim(), $("rbReplyBtn"), () => { state.rbReply = ""; renderRoleBulk(); });
+    };
+  }
+
+  async function rbSend(r, targets) {
+    const raw = ($("rbText").value || "").trim();
+    if (!raw) return toast("Write the message first.");
+    if (!targets.length) return;
+    r.bulkDraft = raw;
+    const over = targets.filter((c) => !inWindow(state.conversations[c.id]) && rbFill(raw, c, r).length > 1000);
+    if (over.length) return toast("The message is over 1,000 characters for " + over.length + " candidate" + (over.length === 1 ? "" : "s") + ". Shorten it first.");
+    if (!confirm(`Send this WhatsApp message about ${r.title} to ${targets.length} candidate${targets.length === 1 ? "" : "s"}? Each one is logged in their chat.`)) return;
+    state.rbBusy = true;
+    let sent = 0; const failed = [];
+    for (const [i, c] of targets.entries()) {
+      state.rbProgress = `Sending ${i + 1} of ${targets.length}…`; renderRoleBulk();
+      try {
+        await api("/api/whatsapp/send", { candidateId: c.id, to: S.toE164Digits(c.phone || c.waPhone, settings.cc), text: rbFill(raw, c, r), useTemplate: !inWindow(state.conversations[c.id]), roleId: r.id });
+        sent++; r.bulkSentTo = [...new Set([...(r.bulkSentTo || []), c.id])];
+        const conv = ensureConv(c.id); if (!conv.roleId) conv.roleId = r.id;
+      } catch (e) { failed.push(candLabel(c) + ": " + String(e.message || "error").slice(0, 120)); }
+      await sleep(250); // stays well inside WhatsApp's per-second limit
+    }
+    r.bulkSends = [...(r.bulkSends || []), { at: now(), text: raw, count: targets.length, sent, failed: failed.length, filter: state.rbFilter, consent: state.rbConsent }];
+    await save("roles", r);
+    state.rbBusy = false;
+    state.rbProgress = `Sent ${sent} of ${targets.length}.` + (failed.length ? " Not sent: " + failed.join("; ") : " Replies appear here and in the WhatsApp tab.");
+    renderRoleBulk();
+    toast(failed.length ? `Sent ${sent}, ${failed.length} failed.` : `Sent to ${sent} candidate${sent === 1 ? "" : "s"}.`);
+    setTimeout(() => { state.rbProgress = ""; }, 15000);
+  }
+
+  // ---------- add role / add candidates ----------
+  $("rbNewRoleBtn").onclick = () => { $("rbRoleForm").reset(); $("rbRoleDlg").showModal(); $("rbTitle").focus(); };
+  $("rbRoleDlg").onclose = async () => {
+    if ($("rbRoleDlg").returnValue !== "ok") return;
+    const title = $("rbTitle").value.trim(); if (!title) return;
+    const r = { id: uid(), title, client: $("rbClient").value.trim(), location: $("rbLocation").value.trim(), description: "", skills: [], shortlist: [], summaries: {}, createdAt: now() };
+    const tax = S.findRole(title); if (tax) { r.taxRoleId = tax.id; }
+    await save("roles", r); state.rbRoleId = r.id; state.rbPerson = null; renderRoleBulk();
+    toast(title + " added. Candidates whose title names it appear on their own; use Add candidates for anyone else.");
+  };
+
+  let rbAddRole = null, rbAddPick = new Set();
+  function openRbAdd(r) {
+    rbAddRole = r; rbAddPick = new Set(); $("rbAddSearch").value = "";
+    $("rbAddTitle").textContent = "Add candidates to " + r.title;
+    drawRbAdd(); $("rbAddDlg").showModal();
+  }
+  function drawRbAdd() {
+    const r = rbAddRole, inRole = new Set(roleMembers(r).map((x) => x.c.id)), q = $("rbAddSearch").value.toLowerCase();
+    const list = state.candidates.filter((c) => !inRole.has(c.id))
+      .filter((c) => !q || [candLabel(c), c.headline, c.email, ...(c.skills || []).map((s) => S.BY_CODE[s.code]?.name || s.code)].join(" ").toLowerCase().includes(q));
+    $("rbAddList").innerHTML = list.length ? list.map((c) => {
+      const why = bulkBlock(c), m = (r.skills || []).length && (c.skills || []).length ? S.match(c, r).score : null;
+      return `<li><label><input type="checkbox" data-add="${c.id}" ${rbAddPick.has(c.id) ? "checked" : ""}>
+        <span><strong>${h(candLabel(c))}</strong> <span class="muted">${h([c.headline, m != null ? m + "% skills match" : ""].filter(Boolean).join(" · "))}</span></span>
+        ${why ? `<span class="chip ${why === "opted out" ? "magenta" : "amber"}">${why}</span>` : ""}</label></li>`;
+    }).join("") : `<li class="muted" style="padding:12px">${state.candidates.length ? "Everyone is already in this role's category." : "No CVs yet."}</li>`;
+    $("rbAddList").querySelectorAll("[data-add]").forEach((el) => (el.onchange = () => { el.checked ? rbAddPick.add(el.dataset.add) : rbAddPick.delete(el.dataset.add); rbAddCount(); }));
+    rbAddCount();
+  }
+  function rbAddCount() { $("rbAddGo").disabled = !rbAddPick.size; $("rbAddGo").textContent = rbAddPick.size ? `Add ${rbAddPick.size}` : "Add"; }
+  $("rbAddSearch").oninput = drawRbAdd;
+  $("rbAddClose").onclick = () => $("rbAddDlg").close();
+  $("rbAddGo").onclick = async () => {
+    const r = rbAddRole, ids = [...rbAddPick];
+    r.bulkAdd = [...new Set([...(r.bulkAdd || []), ...ids])];
+    r.bulkExclude = (r.bulkExclude || []).filter((id) => !rbAddPick.has(id));
+    await save("roles", r); $("rbAddDlg").close(); renderRoleBulk();
+    toast("Added " + ids.length + " to " + r.title + ".");
   };
 
   // =====================================================================
@@ -922,7 +1234,7 @@
     if (!LIVE) {
       const d = lsGet(LS_KEY, {});
       Object.assign(state, { candidates: d.candidates || [], roles: d.roles || [], conversations: d.conversations || {} });
-      state.candId = state.candidates[0]?.id || null; state.roleId = state.roles[0]?.id || null;
+      state.candId = state.candidates[0]?.id || null; state.roleId = state.roles[0]?.id || null; state.rbRoleId = newestRole()?.id || null;
       $("gate").hidden = true; document.body.classList.remove("locked");
       loadTaxonomy();
       return render();
@@ -975,12 +1287,15 @@
       }, (e) => { console.error(e); toast("Couldn't load CVs. Check the Firestore rules are deployed."); }));
       const rs = await fs.getDocs(fs.collection(db, "roles")).catch(() => null);
       state.roles = rs ? rs.docs.map((d) => d.data()) : []; state.roleId = state.roles[0]?.id || null;
+      state.rbRoleId = newestRole()?.id || null;
       await loadTaxonomy();
       // Use the Business API (and allow bulk sends) once its secrets and phone number ID are deployed.
       api("/api/whatsapp/send", { ping: true }).then((r) => { settings.waMode = r.configured ? "api" : "link"; if (state.tab === "wa") renderChats(); }).catch(() => {});
       unsub.push(fs.onSnapshot(fs.collection(db, "conversations"), (snap) => {
         snap.docChanges().forEach((ch) => { if (ch.type === "removed") delete state.conversations[ch.doc.id]; else state.conversations[ch.doc.id] = ch.doc.data(); });
-        if (state.tab === "wa" && !keepTyping()) renderChats(); else renderUnread();
+        if (state.tab === "wa" && !keepTyping()) renderChats();
+        else if (state.tab === "rb" && !keepTyping()) renderRoleBulk();
+        else renderUnread();
       }));
       render();
     });
